@@ -97,6 +97,12 @@ internal class MartenBuild
 
         Target("test-linq", DependsOn("compile-linq-tests"), () =>
             RunTests("LinqTests"));
+        
+        Target("compile-multi-tenancy-tests", DependsOn("clean"), () =>
+            Run("dotnet", $"build src/MultiTenancyTests/MultiTenancyTests.csproj --framework {_framework} --configuration {configuration}"));
+
+        Target("test-multi-tenancy", DependsOn("compile-multi-tenancy-tests"), () =>
+            RunTests("MultiTenancyTests"));
 
 	    Target("compile-patching-tests", DependsOn("clean"), () =>
             Run("dotnet", $"build src/PatchingTests/PatchingTests.csproj --framework {_framework} --configuration {configuration}"));
@@ -107,9 +113,9 @@ internal class MartenBuild
         Target("test-codegen", () =>
         {
             var projectPath = "src/CommandLineRunner";
-            Run("dotnet", $"run -- codegen delete", projectPath);
-            Run("dotnet", $"run -- codegen write", projectPath);
-            Run("dotnet", $"run -- test", projectPath);
+            Run("dotnet", $"run --framework net8.0 -- codegen delete", projectPath);
+            Run("dotnet", $"run --framework net8.0 -- codegen write", projectPath);
+            Run("dotnet", $"run --framework net8.0 -- test", projectPath);
         });
 
         Target("rebuild-database", () =>

@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using JasperFx.CodeGeneration;
 using JasperFx.Core.Reflection;
 using Marten.Events.Daemon;
+using Marten.Events.Daemon.Internals;
 using Marten.Events.Projections;
 using Marten.Exceptions;
 using Marten.Internal.Sessions;
@@ -29,6 +30,15 @@ public abstract class CustomProjection<TDoc, TId>: ProjectionBase, IAggregationR
     protected CustomProjection()
     {
         ProjectionName = GetType().NameInCode();
+
+        if (typeof(TId) == typeof(Guid))
+        {
+            Slicer = (IEventSlicer<TDoc, TId>)new ByStreamId<TDoc>();
+        }
+        else if (typeof(TId) == typeof(string))
+        {
+            Slicer = (IEventSlicer<TDoc, TId>)new ByStreamKey<TDoc>();
+        }
     }
 
     public IEventSlicer<TDoc, TId> Slicer { get; protected internal set; }
@@ -127,9 +137,12 @@ public abstract class CustomProjection<TDoc, TId>: ProjectionBase, IAggregationR
     {
         readDocumentStorage(store);
 
-        var filters = BuildFilters(store);
-
-        return new List<AsyncProjectionShard> { new(this, filters) };
+        return new List<AsyncProjectionShard> { new(this)
+        {
+            IncludeArchivedEvents = false,
+            EventTypes = IncludedEventTypes,
+            StreamType = StreamType
+        } };
     }
 
     async ValueTask<EventRangeGroup> IProjectionSource.GroupEvents(DocumentStore store, IMartenDatabase daemonDatabase,
@@ -212,8 +225,3 @@ public abstract class CustomProjection<TDoc, TId>: ProjectionBase, IAggregationR
     }
 }
 
-[EditorBrowsable(EditorBrowsableState.Never)]
-[Obsolete("Please switch to CustomProjection<TDoc, TId> with the exact same syntax")]
-public abstract class CustomAggregation<TDoc, TId>: CustomProjection<TDoc, TId>
-{
-}

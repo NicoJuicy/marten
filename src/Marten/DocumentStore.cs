@@ -10,6 +10,7 @@ using JasperFx.Core.Reflection;
 using Marten.Events;
 using Marten.Events.Daemon;
 using Marten.Events.Daemon.HighWater;
+using Marten.Events.Daemon.Internals;
 using Marten.Events.Daemon.Resiliency;
 using Marten.Events.Projections;
 using Marten.Exceptions;
@@ -17,6 +18,7 @@ using Marten.Internal.Sessions;
 using Marten.Services;
 using Marten.Storage;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Weasel.Core.Migrations;
 using Weasel.Postgresql.Connections;
 using IsolationLevel = System.Data.IsolationLevel;
@@ -98,6 +100,7 @@ public partial class DocumentStore: IDocumentStore, IAsyncDisposable
     {
         (dataSourceFactory as IDisposable)?.SafeDispose();
         (Options.Events as IDisposable)?.SafeDispose();
+        Tenancy.Dispose();
     }
 
     public ValueTask DisposeAsync()
@@ -392,9 +395,10 @@ public partial class DocumentStore: IDocumentStore, IAsyncDisposable
         var database = tenantIdOrDatabaseIdentifier.IsEmpty()
             ? Tenancy.Default.Database
             : Tenancy.GetTenant(tenantIdOrDatabaseIdentifier).Database;
-        var detector = new HighWaterDetector(new AutoOpenSingleQueryRunner(database), Events, logger);
 
-        return new ProjectionDaemon(this, database, detector, logger);
+        var detector = new HighWaterDetector((MartenDatabase)database, Events, logger);
+
+        return new ProjectionDaemon(this, (MartenDatabase)database, logger, detector, new AgentFactory(this));
     }
 
     public async ValueTask<IProjectionDaemon> BuildProjectionDaemonAsync(
@@ -404,7 +408,7 @@ public partial class DocumentStore: IDocumentStore, IAsyncDisposable
     {
         AssertTenantOrDatabaseIdentifierIsValid(tenantIdOrDatabaseIdentifier);
 
-        logger ??= new NulloLogger();
+        logger ??= Options.LogFactory?.CreateLogger<ProjectionDaemon>() ?? Options.DotNetLogger ?? NullLogger.Instance;
 
         var database = tenantIdOrDatabaseIdentifier.IsEmpty()
             ? Tenancy.Default.Database

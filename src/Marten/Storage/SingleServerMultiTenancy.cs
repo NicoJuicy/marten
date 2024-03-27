@@ -1,10 +1,13 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using JasperFx.Core;
 using Marten.Schema;
 using Npgsql;
+using Weasel.Core;
 using Weasel.Core.Migrations;
+using Weasel.Postgresql;
 using Weasel.Postgresql.Connections;
 using Weasel.Postgresql.Migrations;
 
@@ -28,7 +31,7 @@ public interface ISingleServerMultiTenancy
 }
 
 internal class SingleServerMultiTenancy: SingleServerDatabaseCollection<MartenDatabase>, ITenancy,
-    ISingleServerMultiTenancy
+    ISingleServerMultiTenancy, ITenancyWithMasterDatabase
 {
     private readonly StoreOptions _options;
 
@@ -38,15 +41,50 @@ internal class SingleServerMultiTenancy: SingleServerDatabaseCollection<MartenDa
     private string[] _lastTenantIds;
 
     private ImHashMap<string, Tenant> _tenants = ImHashMap<string, Tenant>.Empty;
+    private readonly Lazy<NpgsqlDataSource> _masterDataSource;
 
     public SingleServerMultiTenancy(
         INpgsqlDataSourceFactory dataSourceFactory,
-        NpgsqlDataSource npgsqlDataSource,
+        string masterConnectionString,
         StoreOptions options
-    ): base(dataSourceFactory, npgsqlDataSource)
+    ): base(dataSourceFactory, masterConnectionString)
     {
         _options = options;
         Cleaner = new CompositeDocumentCleaner(this);
+
+        _masterDataSource =
+            new Lazy<NpgsqlDataSource>(() => options.NpgsqlDataSourceFactory.Create(masterConnectionString));
+    }
+
+    internal class MasterDatabase: PostgresqlDatabase
+    {
+        public MasterDatabase(NpgsqlDataSource dataSource) : base(new DefaultMigrationLogger(), AutoCreate.None, new PostgresqlMigrator(), "MartenMaster", dataSource)
+        {
+        }
+
+        public override IFeatureSchema[] BuildFeatureSchemas()
+        {
+            return Array.Empty<IFeatureSchema>();
+        }
+    }
+
+    private PostgresqlDatabase _tenantDatabase;
+
+    public PostgresqlDatabase TenantDatabase
+    {
+        get
+        {
+            _tenantDatabase ??= new MasterDatabase(_masterDataSource.Value);
+            return _tenantDatabase;
+        }
+    }
+
+    public void Dispose()
+    {
+        foreach (var entry in _tenants.Enumerate())
+        {
+            entry.Value.Database.Dispose();
+        }
     }
 
     public ISingleServerMultiTenancy WithTenants(params string[] tenantIds)

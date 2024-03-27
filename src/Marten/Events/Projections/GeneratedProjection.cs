@@ -1,7 +1,6 @@
 #nullable enable
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -9,6 +8,7 @@ using JasperFx.CodeGeneration;
 using JasperFx.Core.Reflection;
 using JasperFx.RuntimeCompiler;
 using Marten.Events.Daemon;
+using Marten.Events.Daemon.Internals;
 using Marten.Storage;
 
 namespace Marten.Events.Projections;
@@ -37,11 +37,14 @@ public abstract class GeneratedProjection: ProjectionBase, IProjectionSource, IC
 
     void ICodeFile.AssembleTypes(GeneratedAssembly assembly)
     {
-        if (!_hasGenerated)
+        lock (_assembleLocker)
         {
+            if (_hasGenerated)
+                return;
             lock (_assembleLocker)
             {
-                if (_hasGenerated) return;
+                if (_hasGenerated)
+                    return;
                 assembleTypes(assembly, StoreOptions);
                 _hasGenerated = true;
             }
@@ -71,10 +74,12 @@ public abstract class GeneratedProjection: ProjectionBase, IProjectionSource, IC
         generateIfNecessary(store);
         StoreOptions = store.Options;
 
-        // TODO -- this will have to change when we actually do sharding!!!
-        var filters = BuildFilters(store);
-
-        return new List<AsyncProjectionShard> { new(this, filters) };
+        return new List<AsyncProjectionShard> { new(this)
+        {
+            IncludeArchivedEvents = false,
+            EventTypes = IncludedEventTypes,
+            StreamType = StreamType
+        } };
     }
 
 
@@ -95,29 +100,38 @@ public abstract class GeneratedProjection: ProjectionBase, IProjectionSource, IC
 
     private void generateIfNecessary(DocumentStore store)
     {
-        if (_hasGenerated)
+        lock (_assembleLocker)
         {
-            return;
-        }
-
-        StoreOptions = store.Options;
-        var rules = store.Options.CreateGenerationRules();
-        rules.ReferenceTypes(GetType());
-        this.As<ICodeFile>().InitializeSynchronously(rules, store.Options.EventGraph, null);
-
-        if (needsSettersGenerated())
-        {
-            lock (_assembleLocker)
+            if (_hasGenerated)
             {
-                var generatedAssembly = new GeneratedAssembly(rules);
-                assembleTypes(generatedAssembly, store.Options);
-
-                // This will force it to create any setters or dynamic funcs
-                generatedAssembly.GenerateCode();
+                return;
             }
+
+            generateIfNecessaryLocked();
+
+            _hasGenerated = true;
         }
 
-        _hasGenerated = true;
+        return;
+
+        void generateIfNecessaryLocked()
+        {
+            StoreOptions = store.Options;
+            var rules = store.Options.CreateGenerationRules();
+            rules.ReferenceTypes(GetType());
+            this.As<ICodeFile>().InitializeSynchronously(rules, store.Options.EventGraph, null);
+
+            if (!needsSettersGenerated())
+            {
+                return;
+            }
+
+            var generatedAssembly = new GeneratedAssembly(rules);
+            assembleTypes(generatedAssembly, store.Options);
+
+            // This will force it to create any setters or dynamic funcs
+            generatedAssembly.GenerateCode();
+        }
     }
 
     /// <summary>

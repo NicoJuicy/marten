@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -25,14 +26,16 @@ internal class DocumentTable: Table
 
         var idColumn = new IdColumn(mapping);
 
-        AddColumn(idColumn).AsPrimaryKey();
-
+        // Per https://github.com/JasperFx/marten/issues/2430 the tenant_id needs to be first in
+        // PK
         if (mapping.TenancyStyle == TenancyStyle.Conjoined)
         {
             AddColumn(mapping.Metadata.TenantId).AsPrimaryKey();
 
             Indexes.Add(new DocumentIndex(mapping, TenantIdColumn.Name));
         }
+
+        AddColumn(idColumn).AsPrimaryKey();
 
         AddColumn<DataColumn>();
 
@@ -45,6 +48,8 @@ internal class DocumentTable: Table
         AddIfActive(_mapping.Metadata.CausationId);
         AddIfActive(_mapping.Metadata.LastModifiedBy);
         AddIfActive(_mapping.Metadata.Headers);
+
+        AddIfActive(_mapping.Metadata.Revision);
 
         foreach (var field in mapping.DuplicatedFields.Where(x => !x.OnlyForSearching))
         {
@@ -68,6 +73,8 @@ internal class DocumentTable: Table
         Indexes.AddRange(mapping.Indexes);
         ForeignKeys.AddRange(mapping.ForeignKeys);
     }
+
+    public Type DocumentType => _mapping.DocumentType;
 
     public void AddIfActive(MetadataColumn column)
     {

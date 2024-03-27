@@ -18,11 +18,19 @@ namespace Marten.Events.Aggregation;
 
 public abstract partial class GeneratedAggregateProjectionBase<T>
 {
+    private readonly object _compilationLock = new();
+
     public ILiveAggregator<T> Build(StoreOptions options)
     {
         if (_liveType == null)
         {
-            Compile(options);
+            lock (_compilationLock)
+            {
+                if (_liveType == null)
+                {
+                    Compile(options);
+                }
+            }
         }
 
         return BuildLiveAggregator();
@@ -54,7 +62,7 @@ public abstract partial class GeneratedAggregateProjectionBase<T>
         this.As<ICodeFile>().InitializeSynchronously(rules, options.EventGraph, null);
 
         // You have to do this for the sake of the Setters
-        if (_liveGeneratedType == null)
+        if (_liveGeneratedType == null || _liveType == null)
         {
             lock (_assembleLocker)
             {
@@ -86,14 +94,14 @@ public abstract partial class GeneratedAggregateProjectionBase<T>
 
     protected override void assembleTypes(GeneratedAssembly assembly, StoreOptions options)
     {
-        ReferenceAssembliesAndTypes(assembly);
-        AddUsingNamespaces(assembly);
-        CheckAndSetAsyncFlag();
-        ValidateAndSetAggregateMapping(options);
-        BuildAggregationTypes(assembly);
+        referenceAssembliesAndTypes(assembly);
+        addUsingNamespaces(assembly);
+        checkAndSetAsyncFlag();
+        validateAndSetAggregateMapping(options);
+        buildAggregationTypes(assembly);
     }
 
-    private void ReferenceAssembliesAndTypes(GeneratedAssembly assembly)
+    private void referenceAssembliesAndTypes(GeneratedAssembly assembly)
     {
         assembly.Rules.ReferenceTypes(GetType());
         assembly.ReferenceAssembly(GetType().Assembly);
@@ -107,18 +115,18 @@ public abstract partial class GeneratedAggregateProjectionBase<T>
         assembly.Rules.ReferenceTypes(GetType(), typeof(T));
     }
 
-    private static void AddUsingNamespaces(GeneratedAssembly assembly)
+    private static void addUsingNamespaces(GeneratedAssembly assembly)
     {
         assembly.UsingNamespaces.Add("System");
         assembly.UsingNamespaces.Add("System.Linq");
     }
 
-    private void CheckAndSetAsyncFlag()
+    private void checkAndSetAsyncFlag()
     {
         _isAsync = _createMethods.IsAsync || _applyMethods.IsAsync;
     }
 
-    private void ValidateAndSetAggregateMapping(StoreOptions options)
+    private void validateAndSetAggregateMapping(StoreOptions options)
     {
         _aggregateMapping = options.Storage.FindMapping(typeof(T));
         if (_aggregateMapping.IdMember == null)
@@ -128,7 +136,7 @@ public abstract partial class GeneratedAggregateProjectionBase<T>
         }
     }
 
-    private void BuildAggregationTypes(GeneratedAssembly assembly)
+    private void buildAggregationTypes(GeneratedAssembly assembly)
     {
         buildLiveAggregationType(assembly);
         buildInlineAggregationType(assembly);
@@ -272,14 +280,11 @@ public abstract partial class GeneratedAggregateProjectionBase<T>
 
         buildMethod.DerivedVariables.Add(Variable.For<IQuerySession>("(IQuerySession)session"));
 
-        buildMethod.Frames.Code("if (!events.Any()) return null;");
-
-        buildMethod.Frames.Add(new DeclareAggregateFrame(typeof(T)));
-
-        var callCreateAggregateFrame = new CallCreateAggregateFrame(_createMethods);
-
         // This is the existing snapshot passed into the LiveAggregator
         var snapshot = buildMethod.Arguments.Single(x => x.VariableType == typeof(T));
+        buildMethod.Frames.Code($"if (!events.Any()) return {snapshot.Usage};");
+
+        var callCreateAggregateFrame = new CallCreateAggregateFrame(_createMethods);
         callCreateAggregateFrame.CoalesceAssignTo(snapshot);
 
         buildMethod.Frames.Add(callCreateAggregateFrame);

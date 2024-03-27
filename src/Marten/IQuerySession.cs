@@ -148,7 +148,7 @@ public interface IQuerySession: IDisposable, IAsyncDisposable
 
     /// <summary>
     ///     Queries the document storage table for the document type T by supplied SQL. See
-    ///     http://jasperfx.github.io/marten/documentation/documents/querying/sql/ for more information on usage.
+    ///     https://martendb.io/documents/querying/sql.html for more information on usage.
     /// </summary>
     /// <typeparam name="T"></typeparam>
     /// <param name="sql"></param>
@@ -171,7 +171,6 @@ public interface IQuerySession: IDisposable, IAsyncDisposable
     ///     Stream the results of a user-supplied query directly to a stream as a JSON array
     /// </summary>
     /// <param name="destination"></param>
-    /// <param name="token"></param>
     /// <param name="sql"></param>
     /// <param name="parameters"></param>
     /// <typeparam name="T"></typeparam>
@@ -180,7 +179,7 @@ public interface IQuerySession: IDisposable, IAsyncDisposable
 
     /// <summary>
     ///     Asynchronously queries the document storage table for the document type T by supplied SQL. See
-    ///     http://jasperfx.github.io/marten/documentation/documents/querying/sql/ for more information on usage.
+    ///     https://martendb.io/documents/querying/sql.html for more information on usage.
     /// </summary>
     /// <typeparam name="T"></typeparam>
     /// <param name="sql"></param>
@@ -191,14 +190,102 @@ public interface IQuerySession: IDisposable, IAsyncDisposable
 
     /// <summary>
     ///     Asynchronously queries the document storage table for the document type T by supplied SQL. See
-    ///     http://jasperfx.github.io/marten/documentation/documents/querying/sql/ for more information on usage.
+    ///     https://martendb.io/documents/querying/sql.html for more information on usage.
     /// </summary>
     /// <typeparam name="T"></typeparam>
     /// <param name="sql"></param>
-    /// <param name="token"></param>
     /// <param name="parameters"></param>
     /// <returns></returns>
     Task<IReadOnlyList<T>> QueryAsync<T>(string sql, params object[] parameters);
+
+
+    /// <summary>
+    ///     Asynchronously queries the document storage with the supplied SQL.
+    ///     The type parameter can be a document class, a scalar or any JSON-serializable class.
+    ///     If the result is a document, the SQL must contain a select with the required fields in the correct order,
+    ///     depending on the session type and the metadata the document might use, at least id and data must be
+    ///     selected.
+    /// </summary>
+    /// <typeparam name="T"></typeparam>
+    /// <param name="sql"></param>
+    /// <param name="parameters"></param>
+    /// <returns></returns>
+    Task<IReadOnlyList<T>> AdvancedSqlQueryAsync<T>(string sql, CancellationToken token, params object[] parameters);
+
+    /// <summary>
+    ///     Asynchronously queries the document storage with the supplied SQL.
+    ///     The type parameters can be any document class, scalar or JSON-serializable class.
+    ///     For each result type parameter, the SQL SELECT statement must contain a ROW.
+    ///     For document types, the row must contain the required fields in the correct order, 
+    ///     depending on the session type and the metadata the document might use, at least id and data must be
+    ///     provided.
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <typeparam name="T2"></typeparam>
+    /// <param name="sql"></param>
+    /// <param name="parameters"></param>
+    /// <returns></returns>
+    Task<IReadOnlyList<(T1, T2)>> AdvancedSqlQueryAsync<T1, T2>(string sql, CancellationToken token, params object[] parameters);
+
+    /// <summary>
+    ///     Asynchronously queries the document storage with the supplied SQL.
+    ///     The type parameters can be any document class, scalar or JSON-serializable class.
+    ///     For each result type parameter, the SQL SELECT statement must contain a ROW.
+    ///     For document types, the row must contain the required fields in the correct order, 
+    ///     depending on the session type and the metadata the document might use, at least id and data must be
+    ///     provided.
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <typeparam name="T2"></typeparam>
+    /// <typeparam name="T3"></typeparam>
+    /// <param name="sql"></param>
+    /// <param name="parameters"></param>
+    /// <returns></returns>
+    Task<IReadOnlyList<(T1, T2, T3)>> AdvancedSqlQueryAsync<T1, T2,T3>(string sql, CancellationToken token, params object[] parameters);
+
+    /// <summary>
+    ///     Asynchronously queries the document storage with the supplied SQL.
+    ///     The type parameter can be a document class, a scalar or any JSON-serializable class.
+    ///     If the result is a document, the SQL must contain a select with the required fields in the correct order,
+    ///     depending on the session type and the metadata the document might use, at least id and data must be
+    ///     selected.
+    /// </summary>
+    /// <typeparam name="T"></typeparam>
+    /// <param name="sql"></param>
+    /// <param name="parameters"></param>
+    /// <returns></returns>
+    IReadOnlyList<T> AdvancedSqlQuery<T>(string sql, params object[] parameters);
+
+    /// <summary>
+    ///     Asynchronously queries the document storage with the supplied SQL.
+    ///     The type parameters can be any document class, scalar or JSON-serializable class.
+    ///     For each result type parameter, the SQL SELECT statement must contain a ROW.
+    ///     For document types, the row must contain the required fields in the correct order, 
+    ///     depending on the session type and the metadata the document might use, at least id and data must be
+    ///     provided.
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <typeparam name="T2"></typeparam>
+    /// <param name="sql"></param>
+    /// <param name="parameters"></param>
+    /// <returns></returns>
+    IReadOnlyList<(T1, T2)> AdvancedSqlQuery<T1, T2>(string sql, params object[] parameters);
+
+    /// <summary>
+    ///     Asynchronously queries the document storage with the supplied SQL.
+    ///     The type parameters can be any document class, scalar or JSON-serializable class.
+    ///     For each result type parameter, the SQL SELECT statement must contain a ROW.
+    ///     For document types, the row must contain the required fields in the correct order, 
+    ///     depending on the session type and the metadata the document might use, at least id and data must be
+    ///     provided.
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <typeparam name="T2"></typeparam>
+    /// <typeparam name="T3"></typeparam>
+    /// <param name="sql"></param>
+    /// <param name="parameters"></param>
+    /// <returns></returns>
+    IReadOnlyList<(T1, T2, T3)> AdvancedSqlQuery<T1, T2, T3>(string sql, params object[] parameters);
 
     /// <summary>
     ///     Define a batch of deferred queries and load operations to be conducted in one asynchronous request to the

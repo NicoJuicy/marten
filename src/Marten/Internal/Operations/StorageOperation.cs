@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using JasperFx.Core.Exceptions;
 using Marten.Exceptions;
 using Marten.Internal.DirtyTracking;
+using Marten.Metadata;
 using Marten.Schema;
 using Marten.Schema.Identity;
 using Npgsql;
@@ -14,7 +15,13 @@ using Weasel.Postgresql;
 
 namespace Marten.Internal.Operations;
 
-public abstract class StorageOperation<T, TId>: IDocumentStorageOperation, IExceptionTransform
+public interface IRevisionedOperation
+{
+    int Revision { get; set; }
+    bool IgnoreConcurrencyViolation { get; set; }
+}
+
+public abstract class StorageOperation<T, TId>: IDocumentStorageOperation, IExceptionTransform, IRevisionedOperation
 {
     private const string ExpectedMessage = "23505: duplicate key value violates unique constraint";
 
@@ -32,6 +39,11 @@ public abstract class StorageOperation<T, TId>: IDocumentStorageOperation, IExce
         _versions = versions;
         _tableName = mapping.TableName.Name;
     }
+
+    // Using 1 as the default so that inserts "just work"
+    public int Revision { get; set; } = 1;
+
+    public bool IgnoreConcurrencyViolation { get; set; }
 
     public TId Id => _id;
 
@@ -92,6 +104,12 @@ public abstract class StorageOperation<T, TId>: IDocumentStorageOperation, IExce
         }
     }
 
+    protected void setCurrentRevisionParameter(NpgsqlParameter parameter)
+    {
+        parameter.NpgsqlDbType = NpgsqlDbType.Integer;
+        parameter.Value = Revision;
+    }
+
     protected bool postprocessConcurrency(DbDataReader reader, IList<Exception> exceptions)
     {
         var success = false;
@@ -106,6 +124,59 @@ public abstract class StorageOperation<T, TId>: IDocumentStorageOperation, IExce
         return success;
     }
 
+    protected bool postprocessRevision(DbDataReader reader, IList<Exception> exceptions)
+    {
+        if (IgnoreConcurrencyViolation) return true;
+
+        var success = true;
+        if (reader.Read())
+        {
+            var revision = reader.GetFieldValue<int>(0);
+            if (Revision > 1) // don't care about zero or 1
+            {
+                if (revision > Revision)
+                {
+                    exceptions.Add(new ConcurrencyException(typeof(T), _id));
+                    success = false;
+                }
+                else
+                {
+                    success = true;
+                }
+            }
+
+            Revision = revision;
+        }
+
+        return success;
+    }
+
+    protected async Task<bool> postprocessRevisionAsync(DbDataReader reader, IList<Exception> exceptions, CancellationToken token)
+    {
+        if (IgnoreConcurrencyViolation) return true;
+
+        var success = true;
+        if (await reader.ReadAsync(token).ConfigureAwait(false))
+        {
+            var revision = await reader.GetFieldValueAsync<int>(0, token).ConfigureAwait(false);
+            if (Revision > 1) // don't care about zero or 1
+            {
+                if (revision > Revision)
+                {
+                    exceptions.Add(new ConcurrencyException(typeof(T), _id));
+                    success = false;
+                }
+                else
+                {
+                    success = true;
+                }
+            }
+
+            Revision = revision;
+        }
+
+        return success;
+    }
 
     protected void postprocessUpdate(DbDataReader reader, IList<Exception> exceptions)
     {

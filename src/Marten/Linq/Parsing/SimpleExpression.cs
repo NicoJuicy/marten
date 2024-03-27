@@ -54,6 +54,10 @@ internal class SimpleExpression: ExpressionVisitor
                 {
                     Visit(expression);
                 }
+                catch (BadLinqExpressionException)
+                {
+                    throw;
+                }
                 catch (Exception e)
                 {
                     throw new BadLinqExpressionException($"Whoa pardner, Marten could not parse '{expression}' with the SimpleExpression construct", e);
@@ -96,6 +100,28 @@ internal class SimpleExpression: ExpressionVisitor
 
     public bool HasConstant { get; set; }
 
+    private ISqlFragment compareConstants(SimpleExpression right, string op)
+    {
+        // Thanks JT. https://github.com/JasperFx/marten/issues/3027
+        if (Constant.Value == null)
+        {
+            if (right.Constant.Value == null)
+            {
+                // NULL = NULL
+                return op == "=" ? new LiteralTrue() : new LiteralFalse();
+            }
+
+            return op == "=" ? new LiteralFalse() : new LiteralTrue();
+        }
+
+        if (right.Constant.Value == null)
+        {
+            return op == "=" ? new LiteralFalse() : new LiteralTrue();
+        }
+
+        return new ComparisonFilter(new CommandParameter(Constant.Value), new CommandParameter(right.Constant.Value), op);
+    }
+
     public ISqlFragment CompareTo(SimpleExpression right, string op)
     {
         // See GH-2895
@@ -103,7 +129,7 @@ internal class SimpleExpression: ExpressionVisitor
         {
             if (right.Constant != null)
             {
-                return new ComparisonFilter(new CommandParameter(Constant.Value), new CommandParameter(right.Constant.Value), op);
+                return compareConstants(right, op);
             }
 
             return right.CompareTo(this, ComparisonFilter.OppositeOperators[op]);
@@ -262,7 +288,14 @@ internal class SimpleExpression: ExpressionVisitor
 
     protected override Expression VisitMethodCall(MethodCallExpression node)
     {
-        // TODO -- add new IQueryableMember.TryResolveMemberForMethod(node.Method). See https://github.com/JasperFx/marten/issues/2707
+        if (node.Object == null && !(node.Arguments.FirstOrDefault() is MemberExpression))
+        {
+            // It's a method of a static, so this has to be a constant
+            HasConstant = true;
+            Constant = _expression.ReduceToConstant();
+            return null;
+        }
+
         if (node.Method.Name == "Count" && node.Method.DeclaringType == typeof(Enumerable))
         {
             if (node.Arguments.Count == 1)

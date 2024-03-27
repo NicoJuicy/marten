@@ -10,6 +10,7 @@ using Marten.Events.Schema;
 using Marten.Exceptions;
 using Marten.Internal;
 using Marten.Internal.Operations;
+using Marten.Internal.Sessions;
 using Marten.Linq;
 using Marten.Linq.Members;
 using Marten.Linq.Parsing;
@@ -67,6 +68,7 @@ public abstract class EventDocumentStorage: IEventStorage
 
     public IQueryableMemberCollection QueryMembers => _mapping.QueryMembers;
     public ISelectClause SelectClauseWithDuplicatedFields => this;
+    public bool UseNumericRevisions { get; } = false;
 
     public EventGraph Events { get; }
 
@@ -176,6 +178,11 @@ public abstract class EventDocumentStorage: IEventStorage
     }
 
     public void Store(IMartenSession session, IEvent document, Guid? version)
+    {
+        // Nothing
+    }
+
+    public void Store(IMartenSession session, IEvent document, int revision)
     {
         // Nothing
     }

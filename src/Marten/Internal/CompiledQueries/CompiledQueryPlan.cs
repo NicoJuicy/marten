@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
 using JasperFx.CodeGeneration;
@@ -43,7 +44,14 @@ public class CompiledQueryPlan : ICommandBuilder
 
     private void sortMembers()
     {
-        foreach (var member in findMembers())
+        var members = findMembers().ToArray();
+        if (!members.Any())
+        {
+            Debug.WriteLine(
+                "No public properties or fields found. Sorry, but Marten cannot use primary constructor values as compiled query parameters at this time, use a class with settable properties instead.");
+        }
+
+        foreach (var member in members)
         {
             var memberType = member.GetRawMemberType();
             if (memberType == typeof(QueryStatistics))
@@ -122,6 +130,19 @@ public class CompiledQueryPlan : ICommandBuilder
     {
         _current ??= appendCommand();
         _current.CommandText += character;
+    }
+
+    NpgsqlParameter ICommandBuilder.AppendParameter<T>(T value)
+    {
+        _current ??= appendCommand();
+        var name = "p" + _parameterIndex;
+        _parameterIndex++;
+        var usage = new ParameterUsage(_current.Parameters.Count, name, value);
+        _current.Parameters.Add(usage);
+
+        _current.CommandText += ParameterPlaceholder;
+
+        return usage.Parameter;
     }
 
     private int _parameterIndex = 0;

@@ -8,6 +8,7 @@ using JasperFx.CodeGeneration;
 using JasperFx.Core.Reflection;
 using Marten.Events.CodeGeneration;
 using Marten.Events.Daemon;
+using Marten.Events.Daemon.Internals;
 using Marten.Events.Projections;
 using Marten.Schema;
 using Marten.Storage;
@@ -53,6 +54,11 @@ public abstract partial class GeneratedAggregateProjectionBase<T>: GeneratedProj
         _versioning = new AggregateVersioning<T>(scope);
 
         RegisterPublishedType(typeof(T));
+
+        if (typeof(T).TryGetAttribute<ProjectionVersionAttribute>(out var att))
+        {
+            ProjectionVersion = att.Version;
+        }
     }
 
     internal IList<Type> DeleteEvents { get; } = new List<Type>();

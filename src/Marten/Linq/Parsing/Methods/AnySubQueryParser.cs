@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
@@ -21,6 +22,15 @@ internal class AnySubQueryParser: IMethodCallParser
                typeMatches(member.Type);
     }
 
+    private bool hasAny(object value)
+    {
+        if (value is IEnumerable<object> e) return e.Any();
+
+        if (value is ICollection c) return c.Count > 0;
+
+        return false;
+    }
+
     public ISqlFragment Parse(IQueryableMemberCollection memberCollection, IReadOnlyStoreOptions options,
         MethodCallExpression expression)
     {
@@ -31,8 +41,20 @@ internal class AnySubQueryParser: IMethodCallParser
 
         if (expression.Arguments.Count == 1)
         {
+            if (expression.Arguments[0].TryToParseConstant(out var c))
+            {
+                if (c.Value == null) return new LiteralFalse();
+
+                if (c.Value is Array a)
+                {
+                    return a.Length > 0 ? new LiteralTrue() : new LiteralFalse();
+                }
+
+                return hasAny(c.Value) ? new LiteralTrue() : new LiteralFalse();
+            }
+
             // Where(filter).Any()
-            if (expression.Arguments[0] is MethodCallExpression method)
+            else if (expression.Arguments[0] is MethodCallExpression method)
             {
                 // Where(filter).Any()
                 memberExpression = method.Arguments[0];

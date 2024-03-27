@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -37,6 +38,14 @@ public class StaticMultiTenancy: Tenancy, ITenancy, IStaticMultiTenancy
         Cleaner = new CompositeDocumentCleaner(this);
     }
 
+    public void Dispose()
+    {
+        foreach (var entry in _tenants.Enumerate())
+        {
+            entry.Value.Database.Dispose();
+        }
+    }
+
     public bool IsTenantStoredInCurrentDatabase(IMartenDatabase database, string tenantId)
     {
         if (_databases.TryFind(tenantId, out var expected))
@@ -63,7 +72,7 @@ public class StaticMultiTenancy: Tenancy, ITenancy, IStaticMultiTenancy
 
         var database = new MartenDatabase(
             Options,
-            new ConnectionFactory(_dataSourceFactory, connectionString),
+            _dataSourceFactory.Create(connectionString),
             identifier
         );
         _databases = _databases.AddOrUpdate(identifier, database);
@@ -75,7 +84,7 @@ public class StaticMultiTenancy: Tenancy, ITenancy, IStaticMultiTenancy
     {
         var database = new MartenDatabase(
             Options,
-            new ConnectionFactory(_dataSourceFactory, connectionString),
+            _dataSourceFactory.Create(connectionString),
             tenantId
         );
         _databases = _databases.AddOrUpdate(tenantId, database);

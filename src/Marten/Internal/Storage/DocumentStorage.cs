@@ -93,6 +93,7 @@ public abstract class DocumentStorage<T, TId>: IDocumentStorage<T, TId>, IHaveMe
         }
 
         UseOptimisticConcurrency = document.UseOptimisticConcurrency;
+        UseNumericRevisions = document.UseNumericRevisions;
 
 
         _setter = LambdaBuilder.Setter<T, TId>(document.IdMember)!;
@@ -103,6 +104,8 @@ public abstract class DocumentStorage<T, TId>: IDocumentStorage<T, TId>, IHaveMe
 
         HardDeleteFragment = new HardDelete(this);
     }
+
+    public bool UseNumericRevisions { get;  }
 
     public ISelectClause SelectClauseWithDuplicatedFields { get; }
 
@@ -243,6 +246,7 @@ public abstract class DocumentStorage<T, TId>: IDocumentStorage<T, TId>, IHaveMe
 
     public abstract void Store(IMartenSession session, T document);
     public abstract void Store(IMartenSession session, T document, Guid? version);
+    public abstract void Store(IMartenSession session, T document, int revision);
     public abstract void Eject(IMartenSession session, T document);
     public abstract IStorageOperation Update(T document, IMartenSession session, string tenant);
     public abstract IStorageOperation Insert(T document, IMartenSession session, string tenant);
@@ -428,9 +432,8 @@ public abstract class DocumentStorage<T, TId>: IDocumentStorage<T, TId>, IHaveMe
 }
 
 
-internal class DuplicatedFieldSelectClause: ISelectClause
+internal class DuplicatedFieldSelectClause: ISelectClause, IModifyableFromObject
 {
-    private readonly string _selector;
     private readonly string[] _selectFields;
     private readonly IDocumentStorage _parent;
 
@@ -438,7 +441,6 @@ internal class DuplicatedFieldSelectClause: ISelectClause
         IDocumentStorage parent)
     {
         FromObject = fromObject;
-        _selector = selector;
         _selectFields = selectFields;
         _parent = parent;
         SelectedType = selectedType;
@@ -446,10 +448,19 @@ internal class DuplicatedFieldSelectClause: ISelectClause
 
     public void Apply(ICommandBuilder builder)
     {
-        builder.Append(_selector);
+        builder.Append("select ");
+        builder.Append(_selectFields.Join(", "));
+        builder.Append(" from ");
+        builder.Append(FromObject);
+        builder.Append(" as d");
     }
 
-    public string FromObject { get; }
+    public string FromObject
+    {
+        get;
+        set;
+    }
+
 
     public Type SelectedType { get; }
     public string[] SelectFields()

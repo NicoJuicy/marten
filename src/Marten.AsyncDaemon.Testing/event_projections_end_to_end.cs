@@ -7,6 +7,7 @@ using JasperFx.Core;
 using JasperFx.Core.Reflection;
 using Marten.AsyncDaemon.Testing.TestingSupport;
 using Marten.Events;
+using Marten.Events.Daemon.Internals;
 using Marten.Events.Projections;
 using Marten.Storage;
 using Microsoft.Extensions.Logging;
@@ -31,8 +32,8 @@ public class event_projections_end_to_end : DaemonContext
         var filter = projection.As<IProjectionSource>()
             .AsyncProjectionShards(theStore)
             .First()
-            .EventFilters
-            .OfType<Marten.Events.Daemon.EventTypeFilter>()
+            .BuildFilters(theStore)
+            .OfType<EventTypeFilter>()
             .Single();
 
         filter.EventTypes.Single().ShouldBe(typeof(Travel));
@@ -96,7 +97,7 @@ public class event_projections_end_to_end : DaemonContext
         await PublishSingleThreaded();
 
         // rebuild projection `Distance`
-        await agent.RebuildProjection("Distance", CancellationToken.None);
+        await agent.RebuildProjectionAsync("Distance", CancellationToken.None);
         #endregion
 
     }
@@ -126,6 +127,7 @@ public class event_projections_end_to_end : DaemonContext
         var events = (await session.Events.QueryAllRawEvents().ToListAsync());
         var travels = events.OfType<Event<Travel>>().ToDictionary(x => x.Id);
 
+        distances.Count.ShouldBe(travels.Count);
         foreach (var distance in distances)
         {
             if (travels.TryGetValue(distance.Id, out var travel))

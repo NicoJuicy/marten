@@ -580,7 +580,7 @@ public class MartenRegistry
         }
 
         /// <summary>
-        ///     Add a sub class type to this document type so that Marten will store that document in the parent
+        ///     Add a sub class type to the top level document type so that Marten will store that document in the parent
         ///     table storage
         /// </summary>
         /// <param name="alias"></param>
@@ -601,9 +601,32 @@ public class MartenRegistry
             _builder.Alter = m =>
             {
                 m.UseOptimisticConcurrency = enabled;
+
                 if (enabled)
                 {
+                    m.UseNumericRevisions = false;
                     m.Metadata.Version.Enabled = true;
+                }
+            };
+            return this;
+        }
+
+        /// <summary>
+        /// Directs Marten to use the numeric revisioning for this specific
+        /// document type
+        /// </summary>
+        /// <returns></returns>
+        public DocumentMappingExpression<T> UseNumericRevisions(bool enabled)
+        {
+            _builder.Alter = m =>
+            {
+                m.UseNumericRevisions = enabled;
+
+                if (enabled)
+                {
+                    m.UseOptimisticConcurrency = false;
+                    m.Metadata.Revision.Enabled = true;
+                    m.Metadata.Version.Enabled = false;
                 }
             };
             return this;

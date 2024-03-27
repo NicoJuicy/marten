@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
@@ -39,11 +40,11 @@ internal class EnumerableContains: IMethodCallParser
             // This is the value.Contains() pattern
             var collectionMember = memberCollection.MemberFor(expression.Arguments.Last());
 
-            return new WhereFragment($"{collectionMember.TypedLocator} = ANY(?)", constant.Value);
+            return new IsOneOfFilter(collectionMember, new CommandParameter(constant.Value));
         }
 
-        var collection = memberCollection as ICollectionMember ??
-                         memberCollection.MemberFor(expression.Object ?? expression.Arguments[0]) as ICollectionMember;
+        // Not sure why it did this: memberCollection as ICollectionMember ??
+        var collection = memberCollection.MemberFor(expression.Object ?? expression.Arguments[0]) as ICollectionMember;
 
         if (collection == null)
         {

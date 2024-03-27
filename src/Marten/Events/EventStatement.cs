@@ -4,9 +4,11 @@ using System.Linq;
 using JasperFx.Core;
 using Marten.Events.Archiving;
 using Marten.Events.Daemon;
+using Marten.Events.Daemon.Internals;
 using Marten.Linq;
 using Marten.Linq.SqlGeneration;
 using Marten.Storage;
+using Weasel.Core;
 using Weasel.Postgresql;
 using Weasel.Postgresql.SqlGeneration;
 
@@ -22,7 +24,7 @@ internal class EventStatement: SelectorStatement
         _storage = storage;
     }
 
-    public ISqlFragment[] Filters { get; set; } = new ISqlFragment[0];
+    public ISqlFragment[] Filters { get; set; } = Array.Empty<ISqlFragment>();
 
     public EventRange Range { get; set; }
 
@@ -109,3 +111,6 @@ internal class EventStatement: SelectorStatement
         foreach (var filter in Filters) yield return filter;
     }
 }
+
+
+

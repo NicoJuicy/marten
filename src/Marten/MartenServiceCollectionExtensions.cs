@@ -8,7 +8,7 @@ using System.Reflection;
 using JasperFx.CodeGeneration;
 using JasperFx.Core;
 using JasperFx.Core.Reflection;
-using Marten.Events.Daemon;
+using Marten.Events.Daemon.Coordination;
 using Marten.Events.Daemon.Resiliency;
 using Marten.Events.Projections;
 using Marten.Internal;
@@ -22,77 +22,11 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Weasel.Core;
 using Weasel.Core.Migrations;
-using Weasel.Postgresql.Connections;
 
 namespace Marten;
 
 public static class MartenServiceCollectionExtensions
 {
-    /// <summary>
-    ///     Meant for testing scenarios to "help" .Net understand where the IHostEnvironment for the
-    ///     Host. You may have to specify the relative path to the entry project folder from the AppContext.BaseDirectory
-    /// </summary>
-    /// <param name="services"></param>
-    /// <param name="assembly"></param>
-    /// <param name="hintPath"></param>
-    /// <returns></returns>
-    public static IHostBuilder UseApplicationProject(this IHostBuilder builder, Assembly assembly,
-        string? hintPath = null)
-    {
-        return builder.ConfigureServices((c, services) => services.SetApplicationProject(assembly, hintPath));
-    }
-
-    /// <summary>
-    ///     Meant for testing scenarios to "help" .Net understand where the IHostEnvironment for the
-    ///     Host. You may have to specify the relative path to the entry project folder from the AppContext.BaseDirectory
-    /// </summary>
-    /// <param name="services"></param>
-    /// <param name="assembly"></param>
-    /// <param name="hintPath"></param>
-    /// <returns></returns>
-    [Obsolete(
-        "Yeah, this didn't work so well in some hosting setups. Prefer StoreOptions.SetApplicationProject() instead if necessary")]
-    public static IServiceCollection SetApplicationProject(this IServiceCollection services, Assembly assembly,
-        string? hintPath = null)
-    {
-        var environment = services
-            .Where(x => !x.IsKeyedService)
-            .Select(x => x.ImplementationInstance)
-            .OfType<IHostEnvironment>().LastOrDefault();
-
-        var applicationName = assembly.GetName().Name;
-
-        // There are possible project setups where IHostEnvironment is
-        // not available
-        if (environment != null)
-        {
-            environment.ApplicationName = applicationName;
-        }
-
-        var path = AppContext.BaseDirectory.ToFullPath();
-        if (hintPath.IsNotEmpty())
-        {
-            path = path.AppendPath(hintPath).ToFullPath();
-        }
-        else
-        {
-            path = path.TrimEnd(Path.DirectorySeparatorChar);
-            while (!path.EndsWith("bin"))
-            {
-                path = path.ParentDirectory();
-            }
-
-            // Go up once to get to the test project directory, then up again to the "src" level,
-            // then "down" to the application directory
-            path = path.ParentDirectory().ParentDirectory().AppendPath(applicationName);
-        }
-
-        environment.ContentRootPath = path;
-
-        return services;
-    }
-
-
     /// <summary>
     ///     Apply additional configuration to a Marten DocumentStore. This is applied *after*
     ///     AddMarten(), but before the DocumentStore is initialized
@@ -234,6 +168,8 @@ public static class MartenServiceCollectionExtensions
 
             var logger = s.GetService<ILogger<IDocumentStore>>() ?? new NullLogger<IDocumentStore>();
             options.Logger(new DefaultMartenLogger(logger));
+
+            options.LogFactory = s.GetService<ILoggerFactory>();
 
             return new DocumentStore(options);
         });
@@ -506,7 +442,11 @@ public static class MartenServiceCollectionExtensions
         public MartenStoreExpression<T> AddAsyncDaemon(DaemonMode mode)
         {
             Services.ConfigureMarten<T>(opts => opts.Projections.AsyncMode = mode);
-            Services.AddSingleton<IHostedService, AsyncProjectionHostedService<T>>();
+            if (mode != DaemonMode.Disabled)
+            {
+                Services.AddSingleton<IProjectionCoordinator<T>, ProjectionCoordinator<T>>();
+                Services.AddSingleton<IHostedService>(s => s.GetRequiredService<IProjectionCoordinator<T>>());
+            }
 
             return this;
         }
@@ -623,7 +563,12 @@ public static class MartenServiceCollectionExtensions
         public MartenConfigurationExpression AddAsyncDaemon(DaemonMode mode)
         {
             Services.ConfigureMarten(opts => opts.Projections.AsyncMode = mode);
-            Services.AddSingleton<IHostedService, AsyncProjectionHostedService>();
+
+            if (mode != DaemonMode.Disabled)
+            {
+                Services.AddSingleton<IProjectionCoordinator, ProjectionCoordinator>();
+                Services.AddSingleton<IHostedService>(s => s.GetRequiredService<IProjectionCoordinator>());
+            }
 
             return this;
         }
@@ -691,28 +636,6 @@ public static class MartenServiceCollectionExtensions
             return this;
         }
 
-        /// <summary>
-        ///     Eagerly build the application's DocumentStore during application
-        ///     bootstrapping rather than waiting for the first usage of IDocumentStore
-        ///     at runtime.
-        /// </summary>
-        /// <returns></returns>
-        [EditorBrowsable(EditorBrowsableState.Never)]
-        [Obsolete(
-            "Please prefer the InitializeWith() approach for applying start up actions to a DocumentStore. This should not be used in combination with the asynchronous projections. WILL BE REMOVED IN MARTEN V6.")]
-        public IDocumentStore InitializeStore()
-        {
-            if (_options == null)
-            {
-                throw new InvalidOperationException(
-                    "This operation is not valid when the StoreOptions is built by Func<IServiceProvider, StoreOptions>");
-            }
-
-            var store = new DocumentStore(_options);
-            Services.AddSingleton<IDocumentStore>(store);
-
-            return store;
-        }
 
         /// <summary>
         ///     Adds the optimized artifact workflow to this store.
@@ -815,8 +738,56 @@ public static class MartenServiceCollectionExtensions
                     Services.AddScoped<T>();
                     Services.ConfigureMarten((s, opts) =>
                     {
-                        var projection = new ScopedProjectionWrapper<T>(s);
+                        var projection = new ScopedProjectionWrapper<T>(s)
+                        {
+                            Lifecycle = lifecycle,
+                            ProjectionType = typeof(T)
+                        };
+
                         opts.Projections.Add(projection, lifecycle);
+                    });
+                    break;
+            }
+
+
+            return this;
+        }
+
+        /// <summary>
+        /// Add a projection to this application that requires IoC services. The projection itself will
+        /// be created with the application's IoC container
+        /// </summary>
+        /// <param name="lifecycle">The projection lifecycle for Marten</param>
+        /// <param name="lifetime">The IoC lifecycle for the projection instance. Note that the Transient lifetime will still be treated as Scoped</param>
+        /// <typeparam name="T"></typeparam>
+        /// <returns></returns>
+        public MartenConfigurationExpression AddProjectionWithServices<T>(ProjectionLifecycle lifecycle,
+            ServiceLifetime lifetime, string projectionName) where T : class, IProjection
+        {
+            switch (lifetime)
+            {
+                case ServiceLifetime.Singleton:
+                    Services.AddSingleton<T>();
+                    Services.ConfigureMarten((s, opts) =>
+                    {
+                        var projection = s.GetRequiredService<T>();
+                        opts.Projections.Add(projection, lifecycle, projectionName);
+                    });
+                    break;
+
+                case ServiceLifetime.Transient:
+                case ServiceLifetime.Scoped:
+                    Services.AddScoped<T>();
+                    Services.ConfigureMarten((s, opts) =>
+                    {
+                        var projection = new ScopedProjectionWrapper<T>(s)
+                        {
+                            Lifecycle = lifecycle,
+                            ProjectionType = typeof(T),
+                            ProjectionName = projectionName
+                        };
+
+                        opts.Projections.Add(projection, lifecycle, projectionName);
                     });
                     break;
             }

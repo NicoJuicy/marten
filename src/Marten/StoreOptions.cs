@@ -19,6 +19,8 @@ using Marten.Schema;
 using Marten.Schema.Identity.Sequences;
 using Marten.Services.Json;
 using Marten.Storage;
+using Marten.Util;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using Polly;
 using Weasel.Core;
@@ -56,7 +58,7 @@ public partial class StoreOptions: IReadOnlyStoreOptions, IMigrationLogger
 
     private readonly IList<IDocumentPolicy> _policies = new List<IDocumentPolicy>
     {
-        new VersionedPolicy(), new SoftDeletedPolicy(), new TrackedPolicy(), new TenancyPolicy()
+        new VersionedPolicy(), new SoftDeletedPolicy(), new TrackedPolicy(), new TenancyPolicy(), new ProjectionDocumentPolicy()
     };
 
     /// <summary>
@@ -100,20 +102,20 @@ public partial class StoreOptions: IReadOnlyStoreOptions, IMigrationLogger
 
         _linq = new LinqParsing(this);
 
-        #region sample_default_Polly_setup
-
         // Default Polly setup
-        var strategy = new ResiliencePipelineBuilder().AddRetry(new()
+        ResiliencePipeline = new ResiliencePipelineBuilder().AddMartenDefaults().Build();
+
+        // Add logging into our NpgsqlDataSource
+        NpgsqlDataSourceFactory = new DefaultNpgsqlDataSourceFactory(connectionString =>
         {
-            ShouldHandle = new PredicateBuilder().Handle<NpgsqlException>().Handle<MartenCommandException>(),
-            MaxRetryAttempts = 3,
-            Delay = TimeSpan.FromMilliseconds(50),
-            BackoffType = DelayBackoffType.Exponential
-        }).Build();
+            var builder = new NpgsqlDataSourceBuilder(connectionString);
+            if (LogFactory != null)
+            {
+                builder.UseLoggerFactory(LogFactory);
+            }
 
-        ResiliencePipeline = strategy;
-
-        #endregion
+            return builder;
+        });
     }
 
     /// <summary>
@@ -126,6 +128,18 @@ public partial class StoreOptions: IReadOnlyStoreOptions, IMigrationLogger
         configure(builder);
 
         ResiliencePipeline = builder.Build();
+    }
+
+    /// <summary>
+    /// Extend default error handling policies for this DocumentStore.
+    /// Any user supplied policies will take precedence over the default policies.
+    /// </summary>
+    public void ExtendPolly(Action<ResiliencePipelineBuilder> configure)
+    {
+        var builder = new ResiliencePipelineBuilder();
+        configure(builder);
+
+        ResiliencePipeline = builder.AddMartenDefaults().Build();
     }
 
     /// <summary>
@@ -332,7 +346,7 @@ public partial class StoreOptions: IReadOnlyStoreOptions, IMigrationLogger
 
     private Lazy<ITenancy>? _tenancy;
     private Func<string, NpgsqlDataSourceBuilder> _npgsqlDataSourceBuilderFactory = DefaultNpgsqlDataSourceBuilderFactory;
-    private INpgsqlDataSourceFactory _npgsqlDataSourceFactory = new DefaultNpgsqlDataSourceFactory();
+    private INpgsqlDataSourceFactory _npgsqlDataSourceFactory;
     private readonly IList<Type> _compiledQueryTypes = new List<Type>();
     private int _applyChangesLockId = 4004;
     private bool _shouldApplyChangesOnStartup = false;
@@ -352,6 +366,13 @@ public partial class StoreOptions: IReadOnlyStoreOptions, IMigrationLogger
     IReadOnlyLinqParsing IReadOnlyStoreOptions.Linq => Linq;
 
     public int CommandTimeout { get; set; } = DefaultTimeout;
+
+    // This is used to move logging into the >v7 async daemon
+    internal ILoggerFactory? LogFactory { get; set; }
+
+    // This is used mostly for testing to provide *some* sort of logging
+    // within the async daemon
+    internal ILogger? DotNetLogger { get; set; }
 
     /// <summary>
     ///     Configure Marten to create databases for tenants in case databases do not exist or need to be dropped & re-created.
@@ -394,19 +415,18 @@ public partial class StoreOptions: IReadOnlyStoreOptions, IMigrationLogger
         }
 
         _tenancy = new Lazy<ITenancy>(() =>
-            new DefaultTenancy(new ConnectionFactory(NpgsqlDataSourceFactory, connectionString), this));
+            new DefaultTenancy(NpgsqlDataSourceFactory.Create(connectionString), this));
     }
 
     /// <summary>
     ///     Supply a source for the connection string to a Postgresql database
     /// </summary>
     /// <param name="connectionSource"></param>
-    [Obsolete("User version with connection string")]
+    [Obsolete("Use version with connection string. This will be removed in Marten 8")]
     public void Connection(Func<string> connectionSource)
     {
-        _tenancy = new Lazy<ITenancy>(() =>
-            new DefaultTenancy(new ConnectionFactory(NpgsqlDataSourceFactory, connectionSource), this)
-        );
+        throw new NotSupportedException(
+            "Sorry, but this feature is no longer supported. Please use the overload that uses NpgsqlDataSource instead for similar functionality");
     }
 
     /// <summary>
@@ -647,7 +667,7 @@ public partial class StoreOptions: IReadOnlyStoreOptions, IMigrationLogger
     /// <param name="masterConnectionString"></param>
     /// <returns></returns>
     public void MultiTenantedWithSingleServer(
-        string masterConnectionString, // TODO: Consider if we could pull that from NpgsqlDataSource
+        string masterConnectionString,
         Action<ISingleServerMultiTenancy>? configure = null
     )
     {
@@ -658,7 +678,7 @@ public partial class StoreOptions: IReadOnlyStoreOptions, IMigrationLogger
             var tenancy =
                 new SingleServerMultiTenancy(
                     NpgsqlDataSourceFactory,
-                    NpgsqlDataSourceFactory.Create(masterConnectionString),
+                    masterConnectionString,
                     this
                 );
 
@@ -775,6 +795,40 @@ public partial class StoreOptions: IReadOnlyStoreOptions, IMigrationLogger
                 x.UseOptimisticConcurrency = true;
             });
         }
+    }
+
+    /// <summary>
+    /// Multi-tenancy strategy where the tenant database connection strings are defined in a table
+    /// named "mt_tenant_databases"
+    /// </summary>
+    /// <param name="connectionString">A connection string to the database that will hold the tenant database lookup table </param>
+    /// <param name="schemaName">If specified, override the schema name where the tenant database lookup table wil be</param>
+    public void MultiTenantedDatabasesWithMasterDatabaseTable(string connectionString, string? schemaName = "public")
+    {
+        var tenancy = new MasterTableTenancy(this, connectionString, schemaName);
+        Advanced.DefaultTenantUsageEnabled = false;
+        Tenancy = tenancy;
+    }
+
+    /// <summary>
+    /// Multi-tenancy strategy where the tenant database connection strings are defined in a table
+    /// named "mt_tenant_databases"
+    /// </summary>
+    /// <param name="configure"></param>
+    public void MultiTenantedDatabasesWithMasterDatabaseTable(Action<MasterTableTenancyOptions> configure)
+    {
+        var configuration = new MasterTableTenancyOptions();
+        configure(configuration);
+
+        if (configuration.ConnectionString.IsEmpty())
+        {
+            throw new ArgumentOutOfRangeException(nameof(configure),
+                $"{nameof(MasterTableTenancyOptions.ConnectionString)} must be supplied");
+        }
+
+        var tenancy = new MasterTableTenancy(this, configuration);
+        Advanced.DefaultTenantUsageEnabled = false;
+        Tenancy = tenancy;
     }
 }
 
