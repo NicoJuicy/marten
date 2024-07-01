@@ -5,6 +5,7 @@ using System.Data.Common;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text.Json;
 using JasperFx.CodeGeneration;
 using JasperFx.Core;
 using JasperFx.Core.Reflection;
@@ -13,14 +14,16 @@ using Marten.Events.Daemon;
 using Marten.Events.Projections;
 using Marten.Exceptions;
 using Marten.Internal;
-using Marten.Linq;
 using Marten.Metadata;
 using Marten.Schema;
 using Marten.Schema.Identity.Sequences;
+using Marten.Services;
 using Marten.Services.Json;
 using Marten.Storage;
 using Marten.Util;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Newtonsoft.Json;
 using Npgsql;
 using Polly;
 using Weasel.Core;
@@ -30,12 +33,32 @@ using Weasel.Postgresql.Connections;
 
 namespace Marten;
 
+public enum TenantIdStyle
+{
+    /// <summary>
+    /// Use the tenant id as is wherever it is supplied
+    /// </summary>
+    CaseSensitive,
+
+    /// <summary>
+    /// Quietly convert all supplied tenant identifiers to all upper case to prevent
+    /// any possible issues with case sensitive tenant id mismatches
+    /// </summary>
+    ForceUpperCase,
+
+    /// <summary>
+    /// Quietly convert all supplied tenant identifiers to all lower case to prevent
+    /// any possible issues with case sensitive tenant id mismatches
+    /// </summary>
+    ForceLowerCase
+}
+
 /// <summary>
 ///     StoreOptions supplies all the necessary configuration
 ///     necessary to customize and bootstrap a working
 ///     DocumentStore
 /// </summary>
-public partial class StoreOptions: IReadOnlyStoreOptions, IMigrationLogger
+public partial class StoreOptions: IReadOnlyStoreOptions, IMigrationLogger, IDocumentSchemaResolver
 {
     public const int DefaultTimeout = 5;
 
@@ -68,9 +91,19 @@ public partial class StoreOptions: IReadOnlyStoreOptions, IMigrationLogger
     internal readonly IList<IInitialData> InitialData = new List<IInitialData>();
 
     /// <summary>
+    /// Configure tenant id behavior within this Marten DocumentStore
+    /// </summary>
+    public TenantIdStyle TenantIdStyle { get; set; } = TenantIdStyle.CaseSensitive;
+
+    /// <summary>
     ///     Add, remove, or reorder global session listeners
     /// </summary>
     public readonly IList<IDocumentSessionListener> Listeners = new List<IDocumentSessionListener>();
+
+    /// <summary>
+    /// Used to enable or disable Marten's OpenTelemetry features for just this session.
+    /// </summary>
+    public OpenTelemetryOptions OpenTelemetry { get; } = new();
 
     /// <summary>
     ///     Modify the document and event store database mappings for indexes and searching options
@@ -109,7 +142,7 @@ public partial class StoreOptions: IReadOnlyStoreOptions, IMigrationLogger
         NpgsqlDataSourceFactory = new DefaultNpgsqlDataSourceFactory(connectionString =>
         {
             var builder = new NpgsqlDataSourceBuilder(connectionString);
-            if (LogFactory != null)
+            if (LogFactory != null && !DisableNpgsqlLogging)
             {
                 builder.UseLoggerFactory(LogFactory);
             }
@@ -117,6 +150,27 @@ public partial class StoreOptions: IReadOnlyStoreOptions, IMigrationLogger
             return builder;
         });
     }
+
+    public string MaybeCorrectTenantId(string tenantId)
+    {
+        if (tenantId.IsEmpty()) return Marten.Storage.Tenancy.DefaultTenantId;
+        if (tenantId == Marten.Storage.Tenancy.DefaultTenantId) return tenantId;
+
+        switch (TenantIdStyle)
+        {
+            case TenantIdStyle.CaseSensitive:
+                return tenantId;
+            case TenantIdStyle.ForceLowerCase:
+                return tenantId.ToLowerInvariant();
+            default:
+                return tenantId.ToUpperInvariant();
+        }
+    }
+
+    /// <summary>
+    /// Npgsql logging is absurdly noisy, you may want to disable the logging. Default is false
+    /// </summary>
+    public bool DisableNpgsqlLogging { get; set; }
 
     /// <summary>
     /// Configure and override the Polly error handling policies for this DocumentStore
@@ -150,8 +204,6 @@ public partial class StoreOptions: IReadOnlyStoreOptions, IMigrationLogger
     /// Default is false
     /// </summary>
     public bool UseStickyConnectionLifetimes { get; set; } = false;
-
-    internal IList<Type> CompiledQueryTypes => _compiledQueryTypes;
 
     /// <summary>
     /// Polly policies for retries within Marten command execution
@@ -492,13 +544,13 @@ public partial class StoreOptions: IReadOnlyStoreOptions, IMigrationLogger
     }
 
     /// <summary>
-    ///     Use the default serialization (ilmerged Newtonsoft.Json) with Enum values
-    ///     stored as either integers or strings
+    ///     Configure the default serializer settings
     /// </summary>
     /// <param name="enumStorage"></param>
     /// <param name="casing">Casing style to be used in serialization</param>
     /// <param name="collectionStorage">Allow to set collection storage as raw arrays (without explicit types)</param>
     /// <param name="nonPublicMembersStorage">Allow non public members to be used during deserialization</param>
+    [Obsolete("Prefer UseNewtonsoftForSerialization or UseSystemTextJsonForSerialization to configure JSON options")]
     public void UseDefaultSerialization(
         EnumStorage enumStorage = EnumStorage.AsInteger,
         Casing casing = Casing.Default,
@@ -515,6 +567,65 @@ public partial class StoreOptions: IReadOnlyStoreOptions, IMigrationLogger
                 CollectionStorage = collectionStorage,
                 NonPublicMembersStorage = nonPublicMembersStorage
             });
+
+        Serializer(serializer);
+    }
+
+    /// <summary>
+    ///     Configure the Newtonsoft serializer settings
+    /// </summary>
+    /// <param name="enumStorage">Enum storage style</param>
+    /// <param name="casing">Casing style to be used in serialization</param>
+    /// <param name="collectionStorage">Allow to set collection storage as raw arrays (without explicit types)</param>
+    /// <param name="nonPublicMembersStorage">Allow non public members to be used during deserialization</param>
+    public void UseNewtonsoftForSerialization(
+        EnumStorage enumStorage = EnumStorage.AsInteger,
+        Casing casing = Casing.Default,
+        CollectionStorage collectionStorage = CollectionStorage.Default,
+        NonPublicMembersStorage nonPublicMembersStorage = NonPublicMembersStorage.Default,
+        Action<JsonSerializerSettings>? configure = null)
+    {
+        var serializer = new JsonNetSerializer
+        {
+            EnumStorage = enumStorage,
+            Casing = casing,
+            CollectionStorage = collectionStorage,
+            NonPublicMembersStorage = nonPublicMembersStorage
+        };
+
+        if (configure is not null)
+            serializer.Configure(configure);
+
+        Serializer(serializer);
+    }
+
+    /// <summary>
+    ///     Configure the System.Text.Json serializer settings
+    /// </summary>
+    /// <param name="enumStorage">Enum storage style</param>
+    /// <param name="casing">Casing style to be used in serialization</param>
+    public void UseSystemTextJsonForSerialization(
+        EnumStorage enumStorage = EnumStorage.AsInteger,
+        Casing casing = Casing.Default,
+        Action<JsonSerializerOptions>? configure = null)
+        => UseSystemTextJsonForSerialization(null, enumStorage, casing, configure);
+
+    /// <summary>
+    ///     Configure the System.Text.Json serializer settings
+    /// </summary>
+    /// <param name="options">The base settings.</param>
+    /// <param name="enumStorage">Enum storage style</param>
+    /// <param name="casing">Casing style to be used in serialization</param>
+    public void UseSystemTextJsonForSerialization(
+        JsonSerializerOptions? options,
+        EnumStorage enumStorage = EnumStorage.AsInteger,
+        Casing casing = Casing.Default,
+        Action<JsonSerializerOptions>? configure = null)
+    {
+        var serializer = new SystemTextJsonSerializer(options) { EnumStorage = enumStorage, Casing = casing, };
+
+        if (configure is not null)
+            serializer.Configure(configure);
 
         Serializer(serializer);
     }
@@ -541,54 +652,7 @@ public partial class StoreOptions: IReadOnlyStoreOptions, IMigrationLogger
         _logger = logger;
     }
 
-    /// <summary>
-    ///     Force Marten to create document mappings for type T
-    /// </summary>
-    /// <typeparam name="T"></typeparam>
-    public void RegisterDocumentType<T>()
-    {
-        RegisterDocumentType(typeof(T));
-    }
 
-    /// <summary>
-    ///     Force Marten to create a document mapping for the document type
-    /// </summary>
-    /// <param name="documentType"></param>
-    public void RegisterDocumentType(Type documentType)
-    {
-        Storage.RegisterDocumentType(documentType);
-    }
-
-    /// <summary>
-    ///     Force Marten to create document mappings for all the given document types
-    /// </summary>
-    /// <param name="documentTypes"></param>
-    public void RegisterDocumentTypes(IEnumerable<Type> documentTypes)
-    {
-        documentTypes.Each(RegisterDocumentType);
-    }
-
-    /// <summary>
-    ///     Register a compiled query type for the "generate ahead" code generation strategy
-    /// </summary>
-    /// <param name="queryType"></param>
-    /// <exception cref="ArgumentOutOfRangeException"></exception>
-    public void RegisterCompiledQueryType(Type queryType)
-    {
-        if (!queryType.Closes(typeof(ICompiledQuery<,>)))
-        {
-            throw new ArgumentOutOfRangeException(nameof(queryType),
-                $"{queryType.FullNameInCode()} is not a valid Marten compiled query type");
-        }
-
-        if (!queryType.HasDefaultConstructor())
-        {
-            throw new ArgumentOutOfRangeException(nameof(queryType),
-                "Sorry, but Marten requires a no-arg constructor on compiled query types in order to opt into the 'code ahead' generation model.");
-        }
-
-        CompiledQueryTypes.Fill(queryType);
-    }
 
     internal void ApplyConfiguration()
     {
@@ -820,15 +884,57 @@ public partial class StoreOptions: IReadOnlyStoreOptions, IMigrationLogger
         var configuration = new MasterTableTenancyOptions();
         configure(configuration);
 
-        if (configuration.ConnectionString.IsEmpty())
+        // TODO -- remove this when we figure out how to use the DI data source
+        if (configuration.ConnectionString.IsEmpty() && configuration.DataSource == null)
         {
             throw new ArgumentOutOfRangeException(nameof(configure),
-                $"{nameof(MasterTableTenancyOptions.ConnectionString)} must be supplied");
+                $"Either an {nameof(MasterTableTenancyOptions.ConnectionString)} or {nameof(MasterTableTenancyOptions.DataSource)} must be supplied");
         }
 
         var tenancy = new MasterTableTenancy(this, configuration);
         Advanced.DefaultTenantUsageEnabled = false;
         Tenancy = tenancy;
+    }
+
+    IDocumentSchemaResolver IReadOnlyStoreOptions.Schema => this;
+
+    string IDocumentSchemaResolver.EventsSchemaName => Events.DatabaseSchemaName;
+
+    string IDocumentSchemaResolver.For<TDocument>(bool qualified)
+    {
+        var docType = ((IReadOnlyStoreOptions)this).FindOrResolveDocumentType(typeof(TDocument));
+        return qualified ? docType.TableName.QualifiedName : docType.TableName.Name;
+    }
+
+    public string For(Type documentType, bool qualified = true)
+    {
+        var docType = ((IReadOnlyStoreOptions)this).FindOrResolveDocumentType(documentType);
+        return qualified ? docType.TableName.QualifiedName : docType.TableName.Name;
+    }
+
+    string IDocumentSchemaResolver.ForEvents(bool qualified)
+    {
+        return qualified ? _eventGraph.Table.QualifiedName : _eventGraph.Table.Name;
+    }
+
+    string IDocumentSchemaResolver.ForStreams(bool qualified)
+    {
+        return qualified ? _eventGraph.StreamsTable.QualifiedName : _eventGraph.StreamsTable.Name;
+    }
+
+    string IDocumentSchemaResolver.ForEventProgression(bool qualified)
+    {
+        return qualified ? _eventGraph.ProgressionTable.QualifiedName : _eventGraph.ProgressionTable.Name;
+    }
+
+    internal void ApplyMetricsIfAny()
+    {
+        if (OpenTelemetry.Applications.Any())
+        {
+            var logger = DotNetLogger ?? LogFactory?.CreateLogger<MartenCommitMetrics>() ?? NullLogger<MartenCommitMetrics>.Instance;
+            var metrics = new MartenCommitMetrics(logger, OpenTelemetry.Applications);
+            Listeners.Add(metrics);
+        }
     }
 }
 
@@ -864,6 +970,20 @@ public interface IReadOnlyAdvancedOptions
     ///     Option to enable or disable usage of default tenant when using multi-tenanted documents
     /// </summary>
     bool DefaultTenantUsageEnabled { get; }
+
+}
+
+public sealed class MultiHostSettings
+{
+    /// <summary>
+    /// Sets the target session attributes for read-only sessions. Defaults to <see cref="TargetSessionAttributes.Primary"/>
+    /// </summary>
+    public TargetSessionAttributes ReadSessionPreference { get; set; } = TargetSessionAttributes.Primary;
+
+    /// <summary>
+    /// Sets the target session attributes for write sessions. Defaults to <see cref="TargetSessionAttributes.Primary"/>
+    /// </summary>
+    public TargetSessionAttributes WriteSessionPreference { get; set; } = TargetSessionAttributes.Primary;
 }
 
 public class AdvancedOptions: IReadOnlyAdvancedOptions
@@ -907,6 +1027,11 @@ public class AdvancedOptions: IReadOnlyAdvancedOptions
     ///     written
     /// </summary>
     public PostgresqlMigrator Migrator { get; } = new();
+
+    /// <summary>
+    /// Configuration options when using a <see cref="NpgsqlMultiHostDataSource"/>
+    /// </summary>
+    public MultiHostSettings MultiHostSettings { get; } = new();
 
     /// <summary>
     ///     Decides if `timestamp without time zone` database type should be used for `DateTime` DuplicatedField.

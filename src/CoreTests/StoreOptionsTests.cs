@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using System.Linq;
+using System.Text.Json;
 using JasperFx.CodeGeneration;
 using Marten;
 using Marten.Services;
@@ -390,6 +391,54 @@ public class StoreOptionsTests
         // Then
         options.NpgsqlDataSourceFactory.ShouldBeOfType<DummyNpgsqlDataSourceFactory>();
         options.Tenancy.ShouldBeOfType<DefaultTenancy>();
+    }
+
+    [InlineData(true)]
+    [InlineData(false)]
+    [Theory]
+    public void use_base_system_text_json_serialization_options(bool indented)
+    {
+        // Given
+        var options = new StoreOptions();
+
+        // When
+        options.UseSystemTextJsonForSerialization(new JsonSerializerOptions
+        {
+            WriteIndented = indented,
+        });
+
+        // Then
+        var json = options.Serializer().ToJson(new
+        {
+            Field1 = 10,
+            Field2 = 20,
+        });
+
+        if (indented)
+        {
+            json.ShouldContain('\n');
+        }
+        else
+        {
+            json.ShouldNotContain('\n');
+        }
+    }
+
+    [Fact]
+    public void default_tenant_id_style_is_case_sensitive()
+    {
+        new StoreOptions().TenantIdStyle.ShouldBe(TenantIdStyle.CaseSensitive);
+    }
+
+    [Theory]
+    [InlineData(TenantIdStyle.CaseSensitive, "What", "What")]
+    [InlineData(TenantIdStyle.ForceLowerCase, "What", "what")]
+    [InlineData(TenantIdStyle.ForceUpperCase, "What", "WHAT")]
+    public void maybe_correct_tenant_id(TenantIdStyle style, string tenantId, string corrected)
+    {
+        var options = new StoreOptions { TenantIdStyle = style };
+
+        options.MaybeCorrectTenantId(tenantId).ShouldBe(corrected);
     }
 
 

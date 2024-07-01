@@ -5,7 +5,97 @@ using System.Diagnostics.CodeAnalysis;
 
 namespace Marten.Events.Projections;
 
-public abstract class ProjectionBase
+public interface IEventFilterable
+{
+    /// <summary>
+    ///     Short hand syntax to tell Marten that this projection takes in the event type T
+    ///     This is not mandatory, but can be used to optimize the asynchronous projections
+    ///     to create an "allow list" in the IncludedEventTypes collection
+    /// </summary>
+    /// <typeparam name="T"></typeparam>
+    void IncludeType<T>();
+
+    /// <summary>
+    ///     Short hand syntax to tell Marten that this projection takes in the event type T
+    ///     This is not mandatory, but can be used to optimize the asynchronous projections
+    ///     to create an "allow list" in the IncludedEventTypes collection
+    /// </summary>
+    void IncludeType(Type type);
+
+    /// <summary>
+    ///     Limit the events processed by this projection to only streams
+    ///     marked with the given streamType.
+    ///     ONLY APPLIED TO ASYNCHRONOUS PROJECTIONS OR SUBSCRIPTIONS
+    /// </summary>
+    /// <param name="streamType"></param>
+    public void FilterIncomingEventsOnStreamType(Type streamType);
+
+    /// <summary>
+    /// Should archived events be considered for this filtered set? Default is false.
+    /// </summary>
+    public bool IncludeArchivedEvents { get; set; }
+}
+
+public abstract class EventFilterable: IEventFilterable
+{
+    /// <summary>
+    ///     Optimize this projection within the Async Daemon by
+    ///     limiting the event types processed through this projection
+    ///     to include type "T". This is inclusive.
+    ///     If this list is empty, the async daemon will fetch every possible
+    ///     type of event at runtime
+    /// </summary>
+    /// <typeparam name="T"></typeparam>
+    public List<Type> IncludedEventTypes { get; } = new();
+
+    /// <summary>
+    ///     Limit the events processed by this projection to only streams
+    ///     marked with this stream type
+    /// </summary>
+    [DisallowNull]
+    internal Type? StreamType { get; set; }
+
+    /// <summary>
+    ///     Short hand syntax to tell Marten that this projection takes in the event type T
+    ///     This is not mandatory, but can be used to optimize the asynchronous projections
+    ///     to create an "allow list" in the IncludedEventTypes collection
+    /// </summary>
+    /// <typeparam name="T"></typeparam>
+    public void IncludeType<T>()
+    {
+        IncludedEventTypes.Add(typeof(T));
+    }
+
+    /// <summary>
+    ///     Short hand syntax to tell Marten that this projection takes in the event type T
+    ///     This is not mandatory, but can be used to optimize the asynchronous projections
+    ///     to create an "allow list" in the IncludedEventTypes collection
+    /// </summary>
+    public void IncludeType(Type type)
+    {
+        IncludedEventTypes.Add(type);
+    }
+
+    /// <summary>
+    ///     Limit the events processed by this projection to only streams
+    ///     marked with the given streamType.
+    ///     ONLY APPLIED TO ASYNCHRONOUS PROJECTIONS OR SUBSCRIPTIONS
+    /// </summary>
+    /// <param name="streamType"></param>
+    public void FilterIncomingEventsOnStreamType(Type streamType)
+    {
+        StreamType = streamType;
+    }
+
+    /// <summary>
+    /// Should archived events be considered for this filtered set? Default is false.
+    /// </summary>
+    public bool IncludeArchivedEvents { get; set; }
+
+
+}
+
+public abstract class ProjectionBase : EventFilterable
 {
     private readonly List<Type> _publishedTypes = new();
 
@@ -24,53 +114,16 @@ public abstract class ProjectionBase
     /// <summary>
     ///     The projection lifecycle that governs when this projection is executed
     /// </summary>
-    public ProjectionLifecycle Lifecycle { get; internal set; } = ProjectionLifecycle.Async;
-
-    /// <summary>
-    ///     Optimize this projection within the Async Daemon by
-    ///     limiting the event types processed through this projection
-    ///     to include type "T". This is inclusive.
-    ///     If this list is empty, the async daemon will fetch every possible
-    ///     type of event at runtime
-    /// </summary>
-    /// <typeparam name="T"></typeparam>
-    public List<Type> IncludedEventTypes { get; } = new();
-
-    /// <summary>
-    ///     Limit the events processed by this projection to only streams
-    ///     marked with this stream type
-    /// </summary>
-    [DisallowNull]
-    internal Type? StreamType { get; set; }
+    public ProjectionLifecycle Lifecycle { get; set; } = ProjectionLifecycle.Async;
 
 
     /// <summary>
     ///     Direct Marten to delete data published by this projection as the first
     ///     step to rebuilding the projection data. The default is false.
     /// </summary>
-    public bool TeardownDataOnRebuild { get; set; } = false;
+    [Obsolete("Use AsyncOptions.TeardownDataOnRebuild instead")]
+    public virtual bool TeardownDataOnRebuild { get; set; } = false;
 
-    /// <summary>
-    ///     Short hand syntax to tell Marten that this projection takes in the event type T
-    ///     This is not mandatory, but can be used to optimize the asynchronous projections
-    ///     to create an "allow list" in the IncludedEventTypes collection
-    /// </summary>
-    /// <typeparam name="T"></typeparam>
-    public void IncludeType<T>()
-    {
-        IncludedEventTypes.Add(typeof(T));
-    }
-
-    /// <summary>
-    ///     Limit the events processed by this projection to only streams
-    ///     marked with the given streamType.
-    ///     ONLY APPLIED TO ASYNCHRONOUS PROJECTIONS
-    /// </summary>
-    /// <param name="streamType"></param>
-    public void FilterIncomingEventsOnStreamType(Type streamType)
-    {
-        StreamType = streamType;
-    }
 
     internal virtual void AssembleAndAssertValidity()
     {

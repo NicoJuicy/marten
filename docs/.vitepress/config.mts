@@ -84,13 +84,13 @@ const config: UserConfig<DefaultTheme.Config> = {
           text: 'Configuration',
           collapsed: false,
           items: [
-            { text: 'Bootstrap with HostBuilder', link: '/configuration/hostbuilder' },
+            { text: 'Bootstrapping Marten', link: '/configuration/hostbuilder' },
             { text: 'Configuring Document Storage', link: '/configuration/storeoptions' },
             { text: 'Json Serialization', link: '/configuration/json' },
             { text: 'Resiliency Policies', link: '/configuration/retries' },
             { text: 'Pre-Building Generated Types', link: '/configuration/prebuilding' },
             { text: 'Command Line Tooling', link: '/configuration/cli' },
-            { text: 'Development versus Production Usage', link: '/configuration/optimized_artifact_workflow' },
+            { text: 'Optimized Development Workflow', link: '/configuration/optimized_artifact_workflow' },
             { text: 'Multi-Tenancy with Database per Tenant', link: '/configuration/multitenancy' },
             { text: 'Environment Checks', link: '/configuration/environment-checks' },
             { text: 'Custom IoC Integration', link: '/configuration/ioc' },
@@ -108,7 +108,7 @@ const config: UserConfig<DefaultTheme.Config> = {
             { text: 'Storing Documents', link: '/documents/storing' },
             { text: 'Deleting Documents', link: '/documents/deletes' },
             {
-              text: 'Querying Documents', link: '/documents/querying/', collapsed: false, items: [
+              text: 'Querying Documents', link: '/documents/querying/', collapsed: true, items: [
                 { text: 'Loading Documents by Id', link: '/documents/querying/byid' },
                 { text: 'Querying Documents with Linq', link: '/documents/querying/linq/' },
                 { text: 'Supported Linq Operators', link: '/documents/querying/linq/operators' },
@@ -130,7 +130,7 @@ const config: UserConfig<DefaultTheme.Config> = {
             },
 
             {
-              text: 'Indexing Documents', link: '/documents/indexing/', collapsed: false, items: [
+              text: 'Indexing Documents', link: '/documents/indexing/', collapsed: true, items: [
                 { text: 'Calculated Indexes', link: '/documents/indexing/computed-indexes' },
                 { text: 'Duplicated Fields', link: '/documents/indexing/duplicated-fields' },
                 { text: 'Unique Indexes', link: '/documents/indexing/unique' },
@@ -165,7 +165,7 @@ const config: UserConfig<DefaultTheme.Config> = {
             { text: 'Metadata', link: '/events/metadata' },
             { text: 'Archiving Streams', link: '/events/archiving' },
             {
-              text: 'Projections Overview', link: '/events/projections/', collapsed: false, items: [
+              text: 'Projections Overview', link: '/events/projections/', collapsed: true, items: [
                 {
                   text: 'Aggregate Projections', link: '/events/projections/aggregate-projections', items: [
                     { text: 'Live Aggregations', link: '/events/projections/live-aggregates' },
@@ -181,8 +181,11 @@ const config: UserConfig<DefaultTheme.Config> = {
                 { text: 'Rebuilding Projections', link: '/events/projections/rebuilding' },
                 { text: 'Projections and IoC Services', link: '/events/projections/ioc' },
                 { text: 'Async Daemon HealthChecks', link: '/events/projections/healthchecks' },]
+            }, 
+            {
+                text: 'Event Subscriptions',
+                link: '/events/subscriptions'
             },
-
             {
               text: 'Event Versioning',
               link: '/events/versioning'
@@ -217,6 +220,7 @@ const config: UserConfig<DefaultTheme.Config> = {
           collapsed: false,
           items: [
             { text: 'Diagnostics and Instrumentation', link: '/diagnostics' },
+            { text: 'Open Telemetry and Metrics', link: '/otel' },
           ]
         },
         {

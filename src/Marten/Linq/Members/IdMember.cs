@@ -1,14 +1,22 @@
+#nullable enable
 using System;
 using System.Collections.Generic;
 using System.Linq.Expressions;
 using System.Reflection;
 using JasperFx.Core.Reflection;
 using Marten.Linq.Parsing.Operators;
+using Marten.Linq.SqlGeneration;
 using Marten.Linq.SqlGeneration.Filters;
 using Weasel.Postgresql;
 using Weasel.Postgresql.SqlGeneration;
 
 namespace Marten.Linq.Members;
+
+internal interface IValueTypeMember: IQueryableMember
+{
+    object ConvertFromWrapperArray(object values);
+    ISelectClause BuildSelectClause(string fromObject);
+}
 
 internal class IdMember: IQueryableMember, IComparableMember
 {
@@ -16,7 +24,7 @@ internal class IdMember: IQueryableMember, IComparableMember
 
     public IdMember(MemberInfo member)
     {
-        MemberType = member.GetMemberType();
+        MemberType = member.GetMemberType()!;
 
         JSONBLocator = $"CAST({RawLocator} as jsonb)";
         Ancestors = Array.Empty<IQueryableMember>();
@@ -27,7 +35,7 @@ internal class IdMember: IQueryableMember, IComparableMember
 
     public MemberInfo Member { get; }
 
-    public ISqlFragment CreateComparison(string op, ConstantExpression constant)
+    public virtual ISqlFragment CreateComparison(string op, ConstantExpression constant)
     {
         if (constant.Value == null)
         {

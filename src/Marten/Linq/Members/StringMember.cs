@@ -1,4 +1,4 @@
-using System;
+#nullable enable
 using System.Reflection;
 using Marten.Linq.Members.ValueCollections;
 using Marten.Linq.Parsing.Operators;

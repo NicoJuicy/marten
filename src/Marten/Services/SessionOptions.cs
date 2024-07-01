@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Transactions;
 using Marten.Exceptions;
+using Marten.Internal.OpenTelemetry;
 using Marten.Internal.Sessions;
 using Marten.Storage;
 using Npgsql;
@@ -82,17 +83,27 @@ public sealed class SessionOptions
     /// </summary>
     public bool AllowAnyTenant { get; set; }
 
-    internal IConnectionLifetime Initialize(DocumentStore store, CommandRunnerMode mode)
+    internal IConnectionLifetime Initialize(DocumentStore store, CommandRunnerMode mode,
+        OpenTelemetryOptions telemetryOptions)
     {
         Mode = mode;
-        Tenant ??= TenantId != Tenancy.DefaultTenantId ? store.Tenancy.GetTenant(TenantId) : store.Tenancy.Default;
+        Tenant ??= TenantId != Tenancy.DefaultTenantId ? store.Tenancy.GetTenant(store.Options.MaybeCorrectTenantId(TenantId)) : store.Tenancy.Default;
 
         if (!AllowAnyTenant && !store.Options.Advanced.DefaultTenantUsageEnabled &&
-            Tenant.TenantId == Tenancy.DefaultTenantId)
+            (Tenant == null || Tenant.TenantId == Tenancy.DefaultTenantId))
         {
             throw new DefaultTenantUsageDisabledException();
         }
 
+        var innerConnectionLifetime = buildConnectionLifetime(store, mode);
+
+        return telemetryOptions.TrackConnections == TrackLevel.None || !MartenTracing.ActivitySource.HasListeners()
+            ? innerConnectionLifetime
+            : new EventTracingConnectionLifetime(innerConnectionLifetime, Tenant.TenantId, telemetryOptions);
+    }
+
+    private IConnectionLifetime buildConnectionLifetime(DocumentStore store, CommandRunnerMode mode)
+    {
         if (!OwnsTransactionLifecycle && mode != CommandRunnerMode.ReadOnly)
         {
             Mode = CommandRunnerMode.External;
@@ -103,16 +114,17 @@ public sealed class SessionOptions
             if (IsolationLevel == IsolationLevel.Serializable)
             {
                 var transaction = mode == CommandRunnerMode.ReadOnly
-                    ? new ReadOnlyTransactionalConnection(this){CommandTimeout = Timeout ?? store.Options.CommandTimeout}
-                    : new TransactionalConnection(this){CommandTimeout = Timeout ?? store.Options.CommandTimeout};
+                    ? new ReadOnlyTransactionalConnection(this) { CommandTimeout = Timeout ?? store.Options.CommandTimeout }
+                    : new TransactionalConnection(this) { CommandTimeout = Timeout ?? store.Options.CommandTimeout };
                 transaction.BeginTransaction();
 
                 return transaction;
             }
             else if (store.Options.UseStickyConnectionLifetimes)
             {
-                return new TransactionalConnection(this){CommandTimeout = Timeout ?? store.Options.CommandTimeout};
+                return new TransactionalConnection(this) { CommandTimeout = Timeout ?? store.Options.CommandTimeout };
             }
+
             {
                 return new AutoClosingLifetime(this, store.Options);
             }
@@ -121,18 +133,18 @@ public sealed class SessionOptions
 
         if (Transaction != null)
         {
-            return new ExternalTransaction(this){CommandTimeout = Timeout ?? store.Options.CommandTimeout};
+            return new ExternalTransaction(this) { CommandTimeout = Timeout ?? store.Options.CommandTimeout };
         }
 
 
         if (DotNetTransaction != null)
         {
-            return new AmbientTransactionLifetime(this){CommandTimeout = Timeout ?? store.Options.CommandTimeout};
+            return new AmbientTransactionLifetime(this) { CommandTimeout = Timeout ?? store.Options.CommandTimeout };
         }
 
         if (Connection != null)
         {
-            return new TransactionalConnection(this){CommandTimeout = Timeout ?? store.Options.CommandTimeout};
+            return new TransactionalConnection(this) { CommandTimeout = Timeout ?? store.Options.CommandTimeout };
         }
 
 
@@ -144,7 +156,7 @@ public sealed class SessionOptions
     {
         Mode = mode;
         Tenant ??= TenantId != Tenancy.DefaultTenantId
-            ? await store.Tenancy.GetTenantAsync(TenantId).ConfigureAwait(false)
+            ? await store.Tenancy.GetTenantAsync(store.Options.MaybeCorrectTenantId(TenantId)).ConfigureAwait(false)
             : store.Tenancy.Default;
 
         if (!AllowAnyTenant && !store.Options.Advanced.DefaultTenantUsageEnabled &&

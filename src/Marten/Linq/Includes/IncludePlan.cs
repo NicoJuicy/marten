@@ -1,3 +1,4 @@
+#nullable enable
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -13,16 +14,24 @@ using Weasel.Postgresql.SqlGeneration;
 
 namespace Marten.Linq.Includes;
 
-internal class IncludePlan<T>: IIncludePlan
+internal class IncludePlan<T>: IIncludePlan where T : notnull
 {
     private readonly Action<T> _callback;
     private readonly IQueryableMember _connectingMember;
+    private readonly IQueryableMember? _mappingMember;
     private readonly IDocumentStorage<T> _storage;
 
     public IncludePlan(IDocumentStorage<T> storage, IQueryableMember connectingMember, Action<T> callback)
+        : this(storage, connectingMember, null, callback)
+    {
+
+    }
+
+    public IncludePlan(IDocumentStorage<T> storage, IQueryableMember connectingMember, IQueryableMember? mappingMember, Action<T> callback)
     {
         _storage = storage;
         _connectingMember = connectingMember;
+        _mappingMember = mappingMember;
         _callback = callback;
     }
 
@@ -83,7 +92,7 @@ internal class IncludePlan<T>: IIncludePlan
         }
 
         var selector = new SelectorStatement { SelectClause = _storage };
-        filters.Wheres.Insert(0, new IdInIncludedDocumentIdentifierFilter(tempTable.ExportName, _connectingMember));
+        filters.Wheres.Insert(0, new IdInIncludedDocumentIdentifierFilter(tempTable.ExportName, _connectingMember, _mappingMember));
 
         if (tenantFilter != null)
         {

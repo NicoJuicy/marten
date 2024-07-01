@@ -7,8 +7,10 @@ using JasperFx.Core.Reflection;
 using Marten.Internal.Storage;
 using Marten.Linq.SqlGeneration;
 using Marten.Schema;
+using Marten.Schema.Identity;
 using Marten.Services;
 using Marten.Storage;
+using Npgsql;
 
 namespace Marten.Internal.CodeGeneration;
 
@@ -75,16 +77,33 @@ internal class DocumentStorageBuilder
             .Frames.Code($"return new {assembly.Namespace}.{selectorType.TypeName}({{0}}, {{1}});",
                 Use.Type<IMartenSession>(), Use.Type<DocumentMapping>());
 
+        writeParameterForId(type);
         writeNotImplementedStubs(type);
 
-
         return type;
+    }
+
+    private void writeParameterForId(GeneratedType type)
+    {
+        var method = type.MethodFor(nameof(DocumentStorage<string, string>.RawIdentityValue));
+        if (_mapping.IdStrategy is ValueTypeIdGeneration st)
+        {
+                method.Frames.Code($"return id.{st.ValueProperty.Name};");
+        }
+        else if (_mapping.IdStrategy is FSharpDiscriminatedUnionIdGeneration fst)
+        {
+            method.Frames.Code($"return id.{fst.ValueProperty.Name};");
+        }
+        else
+        {
+            method.Frames.Code($"return id;");
+        }
     }
 
     private void writeIdentityMethod(GeneratedType type)
     {
         var identity = type.MethodFor("Identity");
-        identity.Frames.Code($"return {{0}}.{_mapping.IdMember.Name};", identity.Arguments[0]);
+        identity.Frames.Code($"return {{0}}.{_mapping.CodeGen.AccessId};", identity.Arguments[0]);
 
         var assign = type.MethodFor("AssignIdentity");
 

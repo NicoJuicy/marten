@@ -17,7 +17,7 @@ var store = DocumentStore.For(_ =>
     _.Events.DatabaseSchemaName = "events";
 });
 ```
-<sup><a href='https://github.com/JasperFx/marten/blob/master/src/Marten.Testing/Examples/ConfiguringDocumentStore.cs#L185-L194' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_setting_event_schema' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/marten/blob/master/src/Marten.Testing/Examples/ConfiguringDocumentStore.cs#L202-L211' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_setting_event_schema' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 ## Database Tables
@@ -111,3 +111,25 @@ public Dictionary<string, object>? Headers { get; set; }
 <!-- endSnippet -->
 
 The full event data is available on `EventStream` and `IEvent` objects immediately after committing a transaction that involves event capture. See [diagnostics and instrumentation](/diagnostics) for more information on capturing event data in the instrumentation hooks.
+
+## Optional Indexes
+
+As of Marten 7.0, Marten is omitting indexes that aren't universally necessary, but
+you have the option to add some extra, pre-canned indexes. Right now the only option
+is to add a unique index back on the `id` column that would be useful for references to
+external systems like so:
+
+<!-- snippet: sample_using_optional_event_store_indexes -->
+<a id='snippet-sample_using_optional_event_store_indexes'></a>
+```cs
+var builder = Host.CreateApplicationBuilder();
+builder.Services.AddMarten(opts =>
+{
+    opts.Connection("some connection string");
+
+    // Add the unique index to the id field
+    opts.Events.EnableUniqueIndexOnEventId = true;
+});
+```
+<sup><a href='https://github.com/JasperFx/marten/blob/master/src/EventSourcingTests/opting_into_index_on_event_id.cs#L19-L30' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_using_optional_event_store_indexes' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->

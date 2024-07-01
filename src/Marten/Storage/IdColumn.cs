@@ -2,6 +2,7 @@ using JasperFx.CodeGeneration;
 using JasperFx.Core.Reflection;
 using Marten.Internal.CodeGeneration;
 using Marten.Schema;
+using Marten.Schema.Identity;
 using Marten.Util;
 using Weasel.Postgresql;
 using Weasel.Postgresql.Tables;
@@ -13,7 +14,7 @@ internal class IdColumn: TableColumn, ISelectableColumn
     private const string IdentityMapCode = "if (_identityMap.TryGetValue(id, out var existing)) return existing;";
 
     public IdColumn(DocumentMapping mapping): base("id",
-        PostgresqlProvider.Instance.GetDatabaseType(mapping.IdMember.GetMemberType(), mapping.EnumStorage))
+        PostgresqlProvider.Instance.GetDatabaseType(mapping.InnerIdType(), mapping.EnumStorage))
     {
     }
 
@@ -27,9 +28,21 @@ internal class IdColumn: TableColumn, ISelectableColumn
             return;
         }
 
-        sync.Frames.Code($"var id = reader.GetFieldValue<{mapping.IdType.FullNameInCode()}>({index});");
-        async.Frames.CodeAsync(
-            $"var id = await reader.GetFieldValueAsync<{mapping.IdType.FullNameInCode()}>({index}, token);");
+        if (mapping.IdStrategy is ValueTypeIdGeneration st)
+        {
+            st.GenerateCodeForFetchingId(index, sync, async, mapping);
+        }
+        else if (mapping.IdStrategy is FSharpDiscriminatedUnionIdGeneration fst)
+        {
+            fst.GenerateCodeForFetchingId(index, sync, async, mapping);
+        }
+        else
+        {
+            sync.Frames.Code($"var id = reader.GetFieldValue<{mapping.IdType.FullNameInCode()}>({index});");
+            async.Frames.CodeAsync(
+                $"var id = await reader.GetFieldValueAsync<{mapping.IdType.FullNameInCode()}>({index}, token);");
+        }
+
 
         if (storageStyle != StorageStyle.Lightweight)
         {

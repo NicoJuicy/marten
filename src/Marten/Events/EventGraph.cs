@@ -15,6 +15,7 @@ using Marten.Exceptions;
 using Marten.Internal;
 using Marten.Services.Json.Transformations;
 using Marten.Storage;
+using Marten.Subscriptions;
 using Marten.Util;
 using Microsoft.Extensions.Logging.Abstractions;
 using NpgsqlTypes;
@@ -77,6 +78,13 @@ public partial class EventGraph: IEventStoreOptions, IReadOnlyEventStoreOptions,
     /// in testing
     /// </summary>
     public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
+
+    /// <summary>
+    /// Opt into having Marten create a unique index on Event.Id. The default is false. This may
+    /// be helpful if you need to create an external reference id to another system, or need to
+    /// load events by their Id
+    /// </summary>
+    public bool EnableUniqueIndexOnEventId { get; set; } = false;
 
     /// <summary>
     ///     Configure whether event streams are identified with Guid or strings
@@ -253,6 +261,16 @@ public partial class EventGraph: IEventStoreOptions, IReadOnlyEventStoreOptions,
 
     IReadonlyMetadataConfig IReadOnlyEventStoreOptions.MetadataConfig => MetadataConfig;
 
+    void IEventStoreOptions.Subscribe(ISubscription subscription)
+    {
+        Options.Projections.Subscribe(subscription);
+    }
+
+    void IEventStoreOptions.Subscribe(ISubscription subscription, Action<ISubscriptionOptions>? configure)
+    {
+        Options.Projections.Subscribe(subscription, configure);
+    }
+
     private Type findAggregateType(string name)
     {
         foreach (var aggregateType in Options.Projections.AllAggregateTypes())
@@ -413,7 +431,10 @@ public partial class EventGraph: IEventStoreOptions, IReadOnlyEventStoreOptions,
     {
         try
         {
-            await _tombstones.DrainAsync().ConfigureAwait(false);
+            if (_tombstones != null)
+            {
+                await _tombstones.DrainAsync().ConfigureAwait(false);
+            }
         }
         catch (TaskCanceledException)
         {

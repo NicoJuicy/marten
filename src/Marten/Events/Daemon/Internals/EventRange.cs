@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Marten.Events.Daemon.Progress;
@@ -52,6 +53,7 @@ public class EventRange
     public int Size => Events?.Count ?? (int)(SequenceCeiling - SequenceFloor);
 
     // TODO -- make this come through the constructor later
+    [Obsolete("This property will be removed in Marten 8 in favor of passing in the ISubscriptionController")]
     public ISubscriptionAgent Agent { get; set; }
 
     protected bool Equals(EventRange other)

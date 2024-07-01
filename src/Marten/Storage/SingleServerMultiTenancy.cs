@@ -50,7 +50,7 @@ internal class SingleServerMultiTenancy: SingleServerDatabaseCollection<MartenDa
     ): base(dataSourceFactory, masterConnectionString)
     {
         _options = options;
-        Cleaner = new CompositeDocumentCleaner(this);
+        Cleaner = new CompositeDocumentCleaner(this, options);
 
         _masterDataSource =
             new Lazy<NpgsqlDataSource>(() => options.NpgsqlDataSourceFactory.Create(masterConnectionString));
@@ -85,6 +85,8 @@ internal class SingleServerMultiTenancy: SingleServerDatabaseCollection<MartenDa
         {
             entry.Value.Database.Dispose();
         }
+
+        _default?.Database?.Dispose();
     }
 
     public ISingleServerMultiTenancy WithTenants(params string[] tenantIds)
@@ -150,7 +152,7 @@ internal class SingleServerMultiTenancy: SingleServerDatabaseCollection<MartenDa
 
     public new async ValueTask<IMartenDatabase> FindOrCreateDatabase(string tenantIdOrDatabaseIdentifier)
     {
-        var tenant = await GetTenantAsync(tenantIdOrDatabaseIdentifier).ConfigureAwait(false);
+        var tenant = await GetTenantAsync(_options.MaybeCorrectTenantId(tenantIdOrDatabaseIdentifier)).ConfigureAwait(false);
         return tenant.Database;
     }
 

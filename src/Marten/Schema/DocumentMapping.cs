@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -61,8 +60,23 @@ public interface IDocumentType
 
 public class DocumentMapping: IDocumentMapping, IDocumentType
 {
+    internal static bool IsValidIdentityType(Type identityType)
+    {
+        if (identityType == null) return false;
+
+        if (identityType.IsGenericType && identityType.IsNullable())
+        {
+            identityType = identityType.GetGenericArguments()[0];
+        }
+
+        return identityType.IsOneOf(ValidIdTypes) ||
+               ValueTypeIdGeneration.IsCandidate(identityType, out var generation) ||
+               FSharpDiscriminatedUnionIdGeneration.IsCandidate(identityType,
+                   out var fSharpDiscriminatedUnionIdGeneration);
+    }
+
     private static readonly Regex _aliasSanitizer = new("<|>", RegexOptions.Compiled);
-    private static readonly Type[] _validIdTypes = { typeof(int), typeof(Guid), typeof(long), typeof(string) };
+    internal static readonly Type[] ValidIdTypes = { typeof(int), typeof(Guid), typeof(long), typeof(string) };
     private readonly List<DuplicatedField> _duplicates = new();
     private readonly Lazy<DocumentSchema> _schema;
 
@@ -99,6 +113,8 @@ public class DocumentMapping: IDocumentMapping, IDocumentType
         _schema = new Lazy<DocumentSchema>(() => new DocumentSchema(this));
     }
 
+    public DocumentCodeGen? CodeGen { get; private set; }
+
     internal DocumentQueryableMemberCollection QueryMembers { get; }
 
     public IList<string> IgnoredIndexes { get; } = new List<string>();
@@ -133,19 +149,21 @@ public class DocumentMapping: IDocumentMapping, IDocumentType
         get => _idMember;
         set
         {
-            if (value != null && !value.GetMemberType()
-                    .IsOneOf(_validIdTypes))
+            if (value != null && !IsValidIdentityType(value.GetMemberType()))
             {
-                throw new ArgumentOutOfRangeException(nameof(IdMember),
-                    "Id members must be an int, long, Guid, or string");
+                throw new InvalidDocumentException(
+                    $"Id members must be an int, long, Guid, string or a valid strong typed id, but found {value.GetMemberType().FullNameInCode()}");
             }
 
             _idMember = value;
 
             if (_idMember != null)
             {
-                IdStrategy = defineIdStrategy(DocumentType, StoreOptions);
+                IdStrategy = StoreOptions.DetermineIdStrategy(DocumentType, IdMember);
+                CodeGen = new DocumentCodeGen(this);
             }
+
+
         }
     }
 
@@ -333,15 +351,16 @@ public class DocumentMapping: IDocumentMapping, IDocumentType
         // 3) Id Property
         // 4) Id field
         var propertiesWithTypeValidForId = GetProperties(documentType)
-            .Where(p => p.PropertyType.IsOneOf(_validIdTypes));
+            .Where(p => IsValidIdentityType(p.PropertyType));
         var fieldsWithTypeValidForId = documentType.GetFields()
-            .Where(f => f.FieldType.IsOneOf(_validIdTypes));
+            .Where(f => IsValidIdentityType(f.FieldType));
         return propertiesWithTypeValidForId.FirstOrDefault(x => x.HasAttribute<IdentityAttribute>())
                ?? fieldsWithTypeValidForId.FirstOrDefault(x => x.HasAttribute<IdentityAttribute>())
                ?? (MemberInfo)propertiesWithTypeValidForId
                    .FirstOrDefault(x => x.Name.Equals("id", StringComparison.OrdinalIgnoreCase))
                ?? fieldsWithTypeValidForId
                    .FirstOrDefault(x => x.Name.Equals("id", StringComparison.OrdinalIgnoreCase));
+
     }
 
     private static PropertyInfo[] GetProperties(Type type)
@@ -482,7 +501,7 @@ public class DocumentMapping: IDocumentMapping, IDocumentType
         string indexName = null
     )
     {
-        var index = FullTextIndexDefinitionFactory.From(this, regConfig);
+        var index = FullTextIndexDefinitionFactory.From(this, members, regConfig);
         if (indexName != null)
             index.Name = indexName;
 
@@ -557,50 +576,6 @@ public class DocumentMapping: IDocumentMapping, IDocumentType
         ForeignKeys.Add(foreignKey);
 
         return foreignKey;
-    }
-
-    private IIdGeneration defineIdStrategy(Type documentType, StoreOptions options)
-    {
-        if (!idMemberIsSettable())
-        {
-            return new NoOpIdGeneration();
-        }
-
-        var idType = IdMember.GetMemberType();
-        if (idType == typeof(string))
-        {
-            return new StringIdGeneration();
-        }
-
-        if (idType == typeof(Guid))
-        {
-            return new Identity.CombGuidIdGeneration();
-        }
-
-        if (idType == typeof(int) || idType == typeof(long))
-        {
-            return new HiloIdGeneration(documentType, options.Advanced.HiloSequenceDefaults);
-        }
-
-        throw new ArgumentOutOfRangeException(nameof(documentType),
-            $"Marten cannot use the type {idType.FullName} as the Id for a persisted document. Use int, long, Guid, or string");
-    }
-
-    private bool idMemberIsSettable()
-    {
-        var field = IdMember as FieldInfo;
-        if (field != null)
-        {
-            return field.IsPublic;
-        }
-
-        var property = IdMember as PropertyInfo;
-        if (property != null)
-        {
-            return property.CanWrite && property.SetMethod != null;
-        }
-
-        return false;
     }
 
     private static string defaultDocumentAliasName(Type documentType)
@@ -723,14 +698,35 @@ public class DocumentMapping: IDocumentMapping, IDocumentType
                 $"{DocumentType.FullNameInCode()} cannot be configured with UseNumericRevision and UseOptimisticConcurrency. Choose one or the other");
         }
 
-        var idField = new IdMember(IdMember);
+        IQueryableMember idField;
+        if (IdStrategy is ValueTypeIdGeneration st)
+        {
+            idField = typeof(StrongTypedIdMember<,>).CloseAndBuildAs<IQueryableMember>(IdMember, st, st.OuterType,
+                st.SimpleType);
+        }
+        else if (IdStrategy is FSharpDiscriminatedUnionIdGeneration fst)
+        {
+            idField = typeof(StrongTypedIdMember<,>).CloseAndBuildAs<IQueryableMember>(IdMember, fst, fst.OuterType,
+                fst.SimpleType);
+        }
+        else
+        {
+            idField = new IdMember(IdMember);
+        }
         QueryMembers.ReplaceMember(IdMember, idField);
     }
-
 
     public override string ToString()
     {
         return $"Storage for {DocumentType}, Table: {TableName}";
+    }
+
+    internal Type InnerIdType()
+    {
+        if (IdStrategy is ValueTypeIdGeneration sti) return sti.SimpleType;
+
+        var memberType = _idMember.GetMemberType();
+        return memberType.IsNullable() ? memberType.GetGenericArguments()[0] : memberType;
     }
 }
 
@@ -880,4 +876,28 @@ public class DocumentMapping<T>: DocumentMapping
         configure(index);
         return index;
     }
+}
+
+public class DocumentCodeGen
+{
+    public DocumentCodeGen(DocumentMapping mapping)
+    {
+        AccessId = mapping.IdMember.GetRawMemberType().IsNullable()
+            ? $"{mapping.IdMember.Name}.Value"
+            : mapping.IdMember.Name;
+
+        ParameterValue = mapping.IdMember.Name;
+        if (mapping.IdStrategy is ValueTypeIdGeneration st)
+        {
+            ParameterValue = st.ParameterValue(mapping);
+        }
+
+        if (mapping.IdStrategy is FSharpDiscriminatedUnionIdGeneration fst)
+        {
+            ParameterValue = fst.ParameterValue(mapping);
+        }
+    }
+
+    public string AccessId { get; }
+    public string ParameterValue { get; }
 }

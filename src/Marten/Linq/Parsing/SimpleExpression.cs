@@ -1,3 +1,4 @@
+#nullable disable
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -29,6 +30,14 @@ internal class SimpleExpression: ExpressionVisitor
 
         _expression = expression;
         _queryableMembers = queryableMembers;
+
+        if (expression.TryToParseConstant(out var constant))
+        {
+            Constant = constant;
+            HasConstant = true;
+            return;
+        }
+
         switch (expression)
         {
             case ConstantExpression c:
@@ -181,6 +190,8 @@ internal class SimpleExpression: ExpressionVisitor
 
     protected override Expression VisitBinary(BinaryExpression node)
     {
+
+
         switch (node.NodeType)
         {
             case ExpressionType.Modulo:
@@ -203,6 +214,13 @@ internal class SimpleExpression: ExpressionVisitor
                 var right = new SimpleExpression(_queryableMembers, node.Right);
                 var filter = left.CompareTo(right, "=");
                 Filters.Add(filter);
+
+                return null;
+
+            // GH-3116
+            case ExpressionType.Add:
+                Constant = node.ReduceToConstant();
+                HasConstant = true;
 
                 return null;
 

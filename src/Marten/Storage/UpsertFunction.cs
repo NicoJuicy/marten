@@ -39,12 +39,12 @@ internal class UpsertFunction: Function
 
         var table = new DocumentTable(mapping);
 
-        var idType = mapping.IdMember.GetMemberType();
+        var idType = mapping.IdType;
         var pgIdType = PostgresqlProvider.Instance.GetDatabaseType(idType, mapping.EnumStorage);
 
         Arguments.Add(new UpsertArgument
         {
-            Arg = "docId", PostgresType = pgIdType, Column = "id", Members = new[] { mapping.IdMember }
+            Arg = "docId", PostgresType = pgIdType, Column = "id", Members = new[] { mapping.IdMember }, ParameterValue = mapping.CodeGen.ParameterValue
         });
 
         Arguments.Add(new DocJsonBodyArgument());

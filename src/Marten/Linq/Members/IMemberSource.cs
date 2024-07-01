@@ -1,4 +1,6 @@
+#nullable enable
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 
 namespace Marten.Linq.Members;
@@ -8,6 +10,7 @@ namespace Marten.Linq.Members;
 /// </summary>
 public interface IMemberSource
 {
-    bool TryResolve(string dataLocator, StoreOptions options, ISerializer serializer, Type documentType,
-        MemberInfo memberInfo, out IQueryableMember member);
+    bool TryResolve(IQueryableMember parent, StoreOptions options,
+        MemberInfo memberInfo, Type memberType, [NotNullWhen(true)] out IQueryableMember? member);
 }
+

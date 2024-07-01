@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 using JasperFx.CodeGeneration;
 using JasperFx.CodeGeneration.Model;
 using JasperFx.Core;
@@ -18,15 +19,13 @@ namespace Marten.Events.Aggregation;
 
 public abstract partial class GeneratedAggregateProjectionBase<T>
 {
-    private readonly object _compilationLock = new();
-
     public ILiveAggregator<T> Build(StoreOptions options)
     {
-        if (_liveType == null)
+        if (!_hasGenerated)
         {
-            lock (_compilationLock)
+            lock (_assembleLocker)
             {
-                if (_liveType == null)
+                if (!_hasGenerated)
                 {
                     Compile(options);
                 }
@@ -62,11 +61,11 @@ public abstract partial class GeneratedAggregateProjectionBase<T>
         this.As<ICodeFile>().InitializeSynchronously(rules, options.EventGraph, null);
 
         // You have to do this for the sake of the Setters
-        if (_liveGeneratedType == null || _liveType == null)
+        if (!_hasGenerated)
         {
             lock (_assembleLocker)
             {
-                if (_liveGeneratedType == null)
+                if (!_hasGenerated)
                 {
                     assembleTypes(new GeneratedAssembly(rules), options);
                 }
@@ -149,11 +148,25 @@ public abstract partial class GeneratedAggregateProjectionBase<T>
 
     internal ILiveAggregator<T> BuildLiveAggregator()
     {
+        if (_liveType == null)
+        {
+            throw new ArgumentNullException(nameof(_liveType), $"Expected {nameof(_liveType)} to have value");
+        }
+
+        if (_liveGeneratedType == null)
+        {
+            throw new ArgumentNullException(nameof(_liveGeneratedType), $"Expected {nameof(_liveGeneratedType)} to have value");
+        }
+
         var aggregator = (ILiveAggregator<T>)Activator.CreateInstance(_liveType, this);
 
         foreach (var setter in _liveGeneratedType.Setters)
         {
             var prop = _liveType.GetProperty(setter.PropName);
+            if (prop == null)
+            {
+                throw new ArgumentNullException(nameof(prop), $"Expected {nameof(prop)} to have value");
+            }
             prop.SetValue(aggregator, setter.InitialValue);
         }
 
@@ -182,12 +195,21 @@ public abstract partial class GeneratedAggregateProjectionBase<T>
         var storage = store.Options.Providers.StorageFor<T>().Lightweight;
         var slicer = buildEventSlicer(store.Options);
 
+        if (_inlineType == null)
+        {
+            throw new ArgumentNullException(nameof(_inlineType), $"Expected {nameof(_inlineType)} to have value");
+        }
+
         var inline = (IAggregationRuntime)Activator.CreateInstance(_inlineType, store, this, slicer,
             storage, this);
 
         foreach (var setter in _inlineGeneratedType.Setters)
         {
             var prop = _inlineType.GetProperty(setter.PropName);
+            if (prop == null)
+            {
+                throw new ArgumentNullException(nameof(prop), $"Expected {nameof(prop)} to have value");
+            }
             prop.SetValue(inline, setter.InitialValue);
         }
 

@@ -89,7 +89,7 @@ public interface IDocumentSessionListener
     void DocumentAddedForStorage(object id, object document);
 }
 ```
-<sup><a href='https://github.com/JasperFx/marten/blob/master/src/Marten/IDocumentSessionListener.cs#L8-L84' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_idocumentsessionlistener' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/marten/blob/master/src/Marten/IDocumentSessionListener.cs#L27-L103' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_idocumentsessionlistener' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 You can build and inject your own listeners by adding them to the `StoreOptions` object you use to configure a `DocumentStore`:
@@ -216,7 +216,7 @@ public class FakeListener: IChangeListener
     }
 }
 ```
-<sup><a href='https://github.com/JasperFx/marten/blob/master/src/Marten.AsyncDaemon.Testing/basic_async_daemon_tests.cs#L54-L79' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_asyncdaemonlistener' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/marten/blob/master/src/DaemonTests/basic_async_daemon_tests.cs#L77-L102' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_asyncdaemonlistener' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 Wiring a Async Daemon listener:
@@ -230,7 +230,7 @@ StoreOptions(x =>
     x.Projections.AsyncListeners.Add(listener);
 });
 ```
-<sup><a href='https://github.com/JasperFx/marten/blob/master/src/Marten.AsyncDaemon.Testing/basic_async_daemon_tests.cs#L84-L93' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_asynclisteners' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/marten/blob/master/src/DaemonTests/basic_async_daemon_tests.cs#L107-L116' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_asynclisteners' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 ## Custom Logging
@@ -334,7 +334,7 @@ var store = DocumentStore.For(_ =>
     _.Logger(new ConsoleMartenLogger());
 });
 ```
-<sup><a href='https://github.com/JasperFx/marten/blob/master/src/CoreTests/StoreOptionsTests.cs#L173-L180' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_plugging-in-marten-logger' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/marten/blob/master/src/CoreTests/StoreOptionsTests.cs#L174-L181' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_plugging-in-marten-logger' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 You can also directly apply a session logger to any `IQuerySession` or `IDocumentSession` like this:
@@ -346,7 +346,7 @@ using var session = store.LightweightSession();
 // Replace the logger for only this one session
 session.Logger = new RecordingLogger();
 ```
-<sup><a href='https://github.com/JasperFx/marten/blob/master/src/CoreTests/StoreOptionsTests.cs#L182-L188' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_plugging-in-session-logger' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/marten/blob/master/src/CoreTests/StoreOptionsTests.cs#L183-L189' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_plugging-in-session-logger' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 The session logging is a different abstraction specifically so that you _could_ track database commands issued per session. In effect, my own shop is going to use this capability to understand what HTTP endpoints or service bus message handlers are being unnecessarily chatty in their database interactions. We also hope that the contextual logging of commands per document session makes it easier to understand how our systems behave.

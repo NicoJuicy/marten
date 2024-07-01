@@ -1,5 +1,6 @@
 #nullable enable
 using System;
+using JasperFx.Core;
 using Marten.Internal.Storage;
 using Marten.Services;
 
@@ -13,6 +14,12 @@ public class LightweightSession: DocumentSessionBase
     }
 
     internal override DocumentTracking TrackingMode => DocumentTracking.None;
+
+    public override void UseIdentityMapFor<T>()
+    {
+        var documentStorage = _providers.StorageFor<T>().IdentityMap;
+        overrideStorage(typeof(T), documentStorage);
+    }
 
     protected internal override IDocumentStorage<T> selectStorage<T>(DocumentProvider<T> provider)
     {

@@ -1,8 +1,10 @@
 using JasperFx.CodeGeneration;
 using JasperFx.Core;
 using Marten.Internal.CodeGeneration;
+using Marten.Internal.Sessions;
 using Marten.Schema;
 using Marten.Schema.Arguments;
+using Weasel.Postgresql;
 using Weasel.Postgresql.Tables;
 
 namespace Marten.Storage.Metadata;
@@ -14,6 +16,7 @@ internal class RevisionColumn: MetadataColumn<int>, ISelectableColumn
         AllowNulls = false;
         DefaultExpression = "0";
         Enabled = false;
+        ShouldUpdatePartials = true;
     }
 
     internal override UpsertArgument ToArgument()
@@ -56,5 +59,13 @@ internal class RevisionColumn: MetadataColumn<int>, ISelectableColumn
     public override bool CanAlter(TableColumn actual)
     {
         return actual.Type.EqualsIgnoreCase("uuid");
+    }
+
+    public override void WriteMetadataInUpdateStatement(ICommandBuilder builder, DocumentSessionBase session)
+    {
+        builder.Append(SchemaConstants.VersionColumn);
+        builder.Append(" = ");
+        builder.Append(SchemaConstants.VersionColumn);
+        builder.Append(" + 1");
     }
 }

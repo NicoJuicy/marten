@@ -1,6 +1,8 @@
 using System;
 using System.Threading.Tasks;
 using Castle.Components.DictionaryAdapter;
+using JasperFx.CodeGeneration;
+using JasperFx.Core;
 using Marten.Exceptions;
 using Marten.Metadata;
 using Marten.Schema;
@@ -58,6 +60,37 @@ public class numeric_revisioning: OneOffConfigurationsContext
         mapping.Metadata.Revision.Enabled.ShouldBeTrue();
         mapping.UseNumericRevisions.ShouldBeTrue();
         mapping.Metadata.Revision.Member.Name.ShouldBe("Version");
+    }
+
+    [Fact]
+    public void use_mapped_property_for_numeric_versioning()
+    {
+        using var store = SeparateStore(_ =>
+        {
+            _.Schema.For<UnconventionallyVersionedDoc>().UseNumericRevisions(true).Metadata(m =>
+            {
+                m.Revision.MapTo(x => x.UnconventionalVersion);
+            });
+        });
+        store.StorageFeatures.MappingFor(typeof(UnconventionallyVersionedDoc))
+            .Metadata.Revision.Member.Name.ShouldBe(nameof(UnconventionallyVersionedDoc.UnconventionalVersion));
+
+        var session = store.LightweightSession();
+        var doc = new UnconventionallyVersionedDoc{Id = Guid.NewGuid(), Name = "Initial Name"};
+
+        session.Insert(doc);
+        session.SaveChanges();
+
+        var loaded = session.Load<UnconventionallyVersionedDoc>(doc.Id);
+        loaded.UnconventionalVersion.ShouldBe(1);
+
+        doc.Name = "New Name";
+
+        session.Store(doc);
+        session.SaveChanges();
+
+        loaded = session.Load<UnconventionallyVersionedDoc>(doc.Id);
+        loaded.UnconventionalVersion.ShouldBe(2);
     }
 
     [Fact]
@@ -133,26 +166,27 @@ public class numeric_revisioning: OneOffConfigurationsContext
     {
         var doc1 = new RevisionedDoc { Name = "Tim" };
         theSession.Store(doc1);
-        theSession.SaveChanges();
+        await theSession.SaveChangesAsync();
 
         doc1.Name = "Bill";
         theSession.Store(doc1);
-        theSession.SaveChanges();
+        await theSession.SaveChangesAsync();
 
         doc1.Name = "Dru";
+        doc1.Version = 3;
         theSession.Store(doc1);
-        theSession.SaveChanges();
+        await theSession.SaveChangesAsync();
 
         var doc2 = new RevisionedDoc { Id = doc1.Id, Name = "Wrong" };
         theSession.UpdateRevision(doc2, doc1.Version + 1);
-        theSession.SaveChanges();
+        await theSession.SaveChangesAsync();
 
         theSession.Logger = new TestOutputMartenLogger(_output);
 
         await Should.ThrowAsync<ConcurrencyException>(async () =>
         {
             theSession.UpdateRevision(doc2, 2);
-            theSession.SaveChanges();
+            await theSession.SaveChangesAsync();
         });
     }
 
@@ -534,3 +568,11 @@ public class OtherRevisionedDoc
     public int Version { get; set; }
 }
 
+public class UnconventionallyVersionedDoc
+{
+    public Guid Id { get; set; }
+
+    public string Name { get; set; }
+
+    public int UnconventionalVersion { get; set; }
+}

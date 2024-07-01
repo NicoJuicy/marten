@@ -387,7 +387,7 @@ options.Events
 <!-- snippet: sample_upcast_event_lambda_with_jsonnet_jobject -->
 <a id='snippet-sample_upcast_event_lambda_with_jsonnet_jobject'></a>
 ```cs
-options.UseDefaultSerialization(serializerType: SerializerType.Newtonsoft);
+options.UseNewtonsoftForSerialization();
 
 options.Events
     .Upcast<ShoppingCartOpenedWithStatus>(
@@ -421,7 +421,7 @@ using static Marten.Services.Json.Transformations.JsonNet.JsonTransformations;
 <!-- snippet: sample_upcast_event_lambda_with_systemtextjson_json_document -->
 <a id='snippet-sample_upcast_event_lambda_with_systemtextjson_json_document'></a>
 ```cs
-options.UseDefaultSerialization(serializerType: SerializerType.SystemTextJson);
+options.UseSystemTextJsonForSerialization();
 
 options.Events
     .Upcast<ShoppingCartOpenedWithStatus>(
@@ -458,6 +458,11 @@ using static Marten.Services.Json.Transformations.SystemTextJson.JsonTransformat
 Some people prefer to use classes instead of pure functions. It may help encapsulation, especially if you're using external dependencies for the transformation logic. It may also help in structuring the schema migrations code. You get the same set of capabilities as with functions registration.
 
 #### Transformation with CLR types will look like this:
+
+::: tip
+Note the base class used below has 2 generic arguments, the `Upcast()` method only exists
+on _this_ base class
+:::
 
 <!-- snippet: sample_upcaster_with_clr_types_and_event_type_name_from_old_type -->
 <a id='snippet-sample_upcaster_with_clr_types_and_event_type_name_from_old_type'></a>
@@ -663,7 +668,7 @@ options.Events
 <!-- snippet: sample_async_upcast_event_lambda_with_jsonnet_jobject -->
 <a id='snippet-sample_async_upcast_event_lambda_with_jsonnet_jobject'></a>
 ```cs
-options.UseDefaultSerialization(serializerType: SerializerType.Newtonsoft);
+options.UseNewtonsoftForSerialization();
 
 options.Events
     .Upcast<ShoppingCartOpenedWithStatus>(
@@ -704,7 +709,7 @@ using static Marten.Services.Json.Transformations.JsonNet.JsonTransformations;
 <!-- snippet: sample_async_upcast_event_lambda_with_systemtextjson_json_document -->
 <a id='snippet-sample_async_upcast_event_lambda_with_systemtextjson_json_document'></a>
 ```cs
-options.UseDefaultSerialization(serializerType: SerializerType.SystemTextJson);
+options.UseSystemTextJsonForSerialization();
 
 options.Events
     .Upcast<ShoppingCartOpenedWithStatus>(

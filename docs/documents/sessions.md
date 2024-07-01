@@ -212,7 +212,7 @@ theSession.PendingChanges.Operations().Any().ShouldBeFalse();
 
 ::: tip
 This behavior changed in Marten 7. And regardless of the new Marten 7 behavior or opting into the V6 and before "sticky"
-connection handling, you almost certainly want connection pooling enabled (it is by default). 
+connection handling, you almost certainly want connection pooling enabled (it is by default).
 :::
 
 By default, Marten will only open a database connection within a session immediately before any operation that involves
@@ -263,7 +263,7 @@ If you use this method, you will want to make sure the session is disposed to re
 :::
 
 Sometimes you may want to start the transaction in a Marten session for making explicit commits through the session's
-connection (with Dapper for example) or if you simply need to have consistent reads within the usage of the session 
+connection (with Dapper for example) or if you simply need to have consistent reads within the usage of the session
 by querying through an active transaction. In that case, your syntax is:
 
 <!-- snippet: sample_explicit_transactions -->
@@ -327,7 +327,7 @@ public void ConfigureCommandTimeout(IDocumentStore store)
     }
 }
 ```
-<sup><a href='https://github.com/JasperFx/marten/blob/master/src/CoreTests/SessionOptionsTests.cs#L21-L32' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_configurecommandtimeout' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/marten/blob/master/src/CoreTests/SessionOptionsTests.cs#L23-L34' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_configurecommandtimeout' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 ## Unit of Work Mechanics

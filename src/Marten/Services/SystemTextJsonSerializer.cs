@@ -20,20 +20,29 @@ namespace Marten.Services;
 /// </summary>
 public class SystemTextJsonSerializer: ISerializer
 {
-    private readonly JsonSerializerOptions _clean = new();
+    private readonly JsonSerializerOptions _clean;
+    private readonly JsonSerializerOptions _options;
+    private readonly JsonSerializerOptions _optionsDeserialize;
+    private readonly JsonSerializerOptions _withTypes;
 
-    private readonly JsonSerializerOptions _options = new();
-
-    private readonly JsonSerializerOptions _optionsDeserialize = new();
-
-    private readonly JsonSerializerOptions _withTypes = new();
     private Casing _casing = Casing.Default;
     private EnumStorage _enumStorage = EnumStorage.AsInteger;
 
     private JsonDocumentOptions _optionsJsonDocumentDeserialize;
 
     public SystemTextJsonSerializer()
+        : this(null)
     {
+    }
+
+    public SystemTextJsonSerializer(JsonSerializerOptions? options)
+    {
+        options ??= new();
+        _clean = new(options);
+        _options = new(options);
+        _optionsDeserialize = new(options);
+        _withTypes = new(options);
+
         _optionsDeserialize.Converters.Add(new SystemObjectNewtonsoftCompatibleConverter());
 
         _optionsDeserialize.PropertyNamingPolicy =
@@ -183,7 +192,17 @@ public class SystemTextJsonSerializer: ISerializer
     ///     Customize the inner System.Text.Json formatter.
     /// </summary>
     /// <param name="configure"></param>
+    [Obsolete("Use Configure(Action<JsonSerializerOptions> configure) instead.")]
     public void Customize(Action<JsonSerializerOptions> configure)
+    {
+        Configure(configure);
+    }
+
+    /// <summary>
+    ///  Configure the <see cref="JsonSerializerOptions"/> of the System.Text.Json serializer.
+    /// </summary>
+    /// <param name="configure"></param>
+    public void Configure(Action<JsonSerializerOptions> configure)
     {
         configure(_clean);
         configure(_options);

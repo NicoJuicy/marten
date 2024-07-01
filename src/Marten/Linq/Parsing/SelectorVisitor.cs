@@ -1,3 +1,5 @@
+// visitor usage is impossible to annotate
+#nullable disable
 using System;
 using System.Linq;
 using System.Linq.Expressions;
@@ -93,7 +95,7 @@ public class SelectorVisitor: ExpressionVisitor
         }
         else if (member.MemberType.IsSimple() || member.MemberType == typeof(Guid) ||
                  member.MemberType == typeof(decimal) ||
-                 member.MemberType == typeof(DateTimeOffset))
+                 member.MemberType == typeof(DateTimeOffset) || member.MemberType == typeof(DateTime))
         {
             _statement.SelectClause =
                 typeof(NewScalarSelectClause<>).CloseAndBuildAs<ISelectClause>(member,
@@ -103,7 +105,9 @@ public class SelectorVisitor: ExpressionVisitor
         else
         {
             _statement.SelectClause =
-                typeof(DataSelectClause<>).CloseAndBuildAs<ISelectClause>(_statement.FromObject,
+                member is IValueTypeMember valueTypeMember
+                ? valueTypeMember.BuildSelectClause(_statement.FromObject)
+                : typeof(DataSelectClause<>).CloseAndBuildAs<ISelectClause>(_statement.FromObject,
                     member.RawLocator,
                     member.MemberType);
         }

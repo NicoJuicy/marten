@@ -1,11 +1,14 @@
+#nullable enable
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using JasperFx.CodeGeneration;
+using Marten.Exceptions;
 using Marten.Internal.CompiledQueries;
 using Marten.Linq.Members;
+using Marten.Linq.Members.Dictionaries;
 using NpgsqlTypes;
 using Weasel.Postgresql;
 using Weasel.Postgresql.SqlGeneration;
@@ -42,6 +45,10 @@ public class ContainmentWhereFilter: ICollectionAwareFilter, ICollectionAware, I
 
     public ContainmentWhereFilter(ICollectionMember collection, ISerializer serializer)
     {
+        if (collection is DictionaryValuesMember)
+            throw new BadLinqExpressionException(
+                "Marten cannot (yet) support sub query filters against Dictionary<,>.Values. You will have to revert to using MatchesSql()");
+
         _locator = collection.JSONBLocator;
         _serializer = serializer;
         CollectionMember = collection;
@@ -153,7 +160,7 @@ public class ContainmentWhereFilter: ICollectionAwareFilter, ICollectionAware, I
 
     public void PlaceMemberValue(IQueryableMember member, ConstantExpression constant)
     {
-        _usages.Add(new DictionaryValueUsage(constant.Value));
+        _usages.Add(new DictionaryValueUsage(constant.Value!));
 
         var dict = _data;
         for (var i = 1; i < member.Ancestors.Length; i++)

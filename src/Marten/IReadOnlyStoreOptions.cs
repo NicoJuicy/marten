@@ -83,4 +83,11 @@ public interface IReadOnlyStoreOptions
     IDocumentType FindOrResolveDocumentType(Type documentType);
 
     void AssertDocumentTypeIsSoftDeleted(Type documentType);
+
+    /// <summary>
+    /// Get database schema names for configured tables
+    /// </summary>
+    IDocumentSchemaResolver Schema { get; }
+
+    string MaybeCorrectTenantId(string tenantId);
 }

@@ -1,3 +1,4 @@
+#nullable enable
 using System;
 using JasperFx.Core;
 using Marten.Internal;
@@ -9,7 +10,7 @@ using Weasel.Postgresql.SqlGeneration;
 
 namespace Marten.Linq.SqlGeneration;
 
-internal class SelectDataSelectClause<T>: ISelectClause, IScalarSelectClause
+internal class SelectDataSelectClause<T>: ISelectClause, IScalarSelectClause, IModifyableFromObject
 {
     public SelectDataSelectClause(string from, ISqlFragment selector)
     {
@@ -21,7 +22,7 @@ internal class SelectDataSelectClause<T>: ISelectClause, IScalarSelectClause
 
     public Type SelectedType => typeof(T);
 
-    public string FromObject { get; }
+    public string FromObject { get; set; }
 
     public void Apply(ICommandBuilder sql)
     {

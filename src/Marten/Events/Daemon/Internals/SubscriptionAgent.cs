@@ -4,13 +4,14 @@ using System.Threading.Tasks;
 using System.Threading.Tasks.Dataflow;
 using JasperFx.Core;
 using Marten.Events.Projections;
+using Marten.Exceptions;
 using Microsoft.Extensions.Logging;
 
 namespace Marten.Events.Daemon.Internals;
 
 public class SubscriptionAgent: ISubscriptionAgent, IAsyncDisposable
 {
-    private readonly AsyncOptions _options;
+    private readonly TimeProvider _timeProvider;
     private readonly IEventLoader _loader;
     private readonly ISubscriptionExecution _execution;
     private readonly ShardStateTracker _tracker;
@@ -18,16 +19,17 @@ public class SubscriptionAgent: ISubscriptionAgent, IAsyncDisposable
     public ShardName Name { get; }
     private readonly CancellationTokenSource _cancellation = new();
     private readonly ActionBlock<Command> _commandBlock;
-    private ErrorHandlingOptions _errorOptions = new();
     private IDaemonRuntime _runtime = new NulloDaemonRuntime();
 
-    public SubscriptionAgent(ShardName name, AsyncOptions options, IEventLoader loader,
-        ISubscriptionExecution execution, ShardStateTracker tracker, ILogger logger)
+    public SubscriptionAgent(ShardName name, AsyncOptions options, TimeProvider timeProvider, IEventLoader loader,
+        ISubscriptionExecution execution, ShardStateTracker tracker, ISubscriptionMetrics metrics, ILogger logger)
     {
-        _options = options;
+        Options = options;
+        _timeProvider = timeProvider;
         _loader = loader;
         _execution = execution;
         _tracker = tracker;
+        Metrics = metrics;
         _logger = logger;
         Name = name;
 
@@ -40,9 +42,13 @@ public class SubscriptionAgent: ISubscriptionAgent, IAsyncDisposable
         }
     }
 
+    public AsyncOptions Options { get; }
+
     public string ProjectionShardIdentity { get; private set; }
 
     public CancellationToken CancellationToken => _cancellation.Token;
+
+    public ErrorHandlingOptions ErrorOptions { get; private set; } = new();
 
     // Making the setter internal so the test harness can override it
     // It's naughty, will make some people get very upset, and
@@ -52,6 +58,12 @@ public class SubscriptionAgent: ISubscriptionAgent, IAsyncDisposable
     public long LastCommitted { get; internal set; }
 
     public long HighWaterMark { get; internal set; }
+
+    public async Task ReportCriticalFailureAsync(Exception ex, long lastProcessed)
+    {
+        await ReportCriticalFailureAsync(ex).ConfigureAwait(false);
+        MarkSuccess(lastProcessed);
+    }
 
     public async Task ReportCriticalFailureAsync(Exception ex)
     {
@@ -63,7 +75,7 @@ public class SubscriptionAgent: ISubscriptionAgent, IAsyncDisposable
             _cancellation.Cancel();
 #endif
             await _execution.HardStopAsync().ConfigureAwait(false);
-            PausedTime = DateTimeOffset.UtcNow;
+            PausedTime = _timeProvider.GetUtcNow();
             Status = AgentStatus.Paused;
             _tracker.Publish(new ShardState(Name, LastCommitted) { Action = ShardAction.Paused, Exception = ex});
 
@@ -131,7 +143,7 @@ public class SubscriptionAgent: ISubscriptionAgent, IAsyncDisposable
     {
         Mode = request.Mode;
         _execution.Mode = request.Mode;
-        _errorOptions = request.ErrorHandling;
+        ErrorOptions = request.ErrorHandling;
         _runtime = request.Runtime;
         await _execution.EnsureStorageExists().ConfigureAwait(false);
         _commandBlock.Post(Command.Started(_tracker.HighWaterMark, request.Floor));
@@ -147,8 +159,9 @@ public class SubscriptionAgent: ISubscriptionAgent, IAsyncDisposable
         Mode = ShardExecutionMode.Rebuild;
         _rebuild = new TaskCompletionSource();
         _execution.Mode = ShardExecutionMode.Rebuild;
-        _errorOptions = request.ErrorHandling;
+        ErrorOptions = request.ErrorHandling;
         _runtime = request.Runtime;
+        LastCommitted = request.Floor; // Force it to start here!
 
         try
         {
@@ -172,6 +185,12 @@ public class SubscriptionAgent: ISubscriptionAgent, IAsyncDisposable
     public Task RecordDeadLetterEventAsync(DeadLetterEvent @event)
     {
         return _runtime.RecordDeadLetterEventAsync(@event);
+    }
+
+    public Task RecordDeadLetterEventAsync(IEvent @event, Exception ex)
+    {
+        var dlEvent = new DeadLetterEvent(@event, Name, new ApplyEventException(@event, ex));
+        return _runtime.RecordDeadLetterEventAsync(dlEvent);
     }
 
     public DateTimeOffset? PausedTime { get; private set; }
@@ -215,6 +234,7 @@ public class SubscriptionAgent: ISubscriptionAgent, IAsyncDisposable
 
                 HighWaterMark = command.HighWaterMark;
                 LastCommitted = LastEnqueued = command.LastCommitted;
+
                 break;
 
             case CommandType.RangeCompleted:
@@ -230,10 +250,13 @@ public class SubscriptionAgent: ISubscriptionAgent, IAsyncDisposable
                 break;
         }
 
+        // Mind the gap!
+        Metrics.UpdateGap(HighWaterMark, LastCommitted);
+
         var inflight = LastEnqueued - LastCommitted;
 
         // Back pressure, slow down
-        if (inflight >= _options.MaximumHopperSize) return;
+        if (inflight >= Options.MaximumHopperSize) return;
 
         // If all caught up, do nothing!
         // Not sure how either of these numbers could actually be higher than
@@ -242,7 +265,7 @@ public class SubscriptionAgent: ISubscriptionAgent, IAsyncDisposable
         if (LastEnqueued >= HighWaterMark) return;
 
         // You could maybe get a full size batch, so go get the next
-        if (HighWaterMark - LastEnqueued > _options.BatchSize)
+        if (HighWaterMark - LastEnqueued > Options.BatchSize)
         {
             await loadNextAsync().ConfigureAwait(false);
         }
@@ -250,7 +273,7 @@ public class SubscriptionAgent: ISubscriptionAgent, IAsyncDisposable
         {
             // If the execution is busy, let's let events accumulate a little
             // more
-            var twoBatchSize = 2 * _options.BatchSize;
+            var twoBatchSize = 2 * Options.BatchSize;
             if (inflight < twoBatchSize)
             {
                 await loadNextAsync().ConfigureAwait(false);
@@ -258,16 +281,19 @@ public class SubscriptionAgent: ISubscriptionAgent, IAsyncDisposable
         }
     }
 
+    public ISubscriptionMetrics Metrics { get; }
+
     private async Task loadNextAsync()
     {
         var request = new EventRequest
         {
             HighWater = HighWaterMark,
-            BatchSize = _options.BatchSize,
+            BatchSize = Options.BatchSize,
             Floor = LastEnqueued,
-            ErrorOptions = _errorOptions,
+            ErrorOptions = ErrorOptions,
             Runtime = _runtime,
-            Name = Name
+            Name = Name,
+            Metrics = Metrics
         };
 
         try

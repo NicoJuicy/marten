@@ -1,13 +1,6 @@
-# Bootstrapping in .Net Applications
+# Bootstrapping Marten
 
-:::tip
-The exact formula for bootstrapping .Net applications has changed quite a bit from early .Net Core to the latest `WebApplication` model in .Net 6.0 at the time this page was last updated. Regardless, the `IServiceCollection` abstraction for registering services in an IoC container has remained stable and everything in this page functions against that model.
-:::
-
-As briefly shown in the [getting started](/) page, Marten comes with extension methods for the .Net Core standard `IServiceCollection` to quickly add Marten services to any .Net application that is bootstrapped by either the [Generic IHostBuilder abstraction](https://docs.microsoft.com/en-us/aspnet/core/fundamentals/host/generic-host) or the [ASP.Net Core IWebHostBuilder](https://docs.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.hosting.iwebhostbuilder) or the [.Net 6 WebApplication](https://docs.microsoft.com/en-us/aspnet/core/migration/50-to-60?view=aspnetcore-6.0&tabs=visual-studio#new-hosting-model) hosting models.
-
-Jumping right into a basic ASP&#46;NET Core application using the out of the box Web API template, you'd have a class called `Startup` that holds most of the configuration for your application including
-the IoC service registrations for your application in the `Startup.ConfigureServices()` method. To add Marten to your application, use the `AddMarten()` method as shown below:
+As briefly shown in the [getting started](/) page, Marten comes with the `AddMarten()` extension method for the .NET `IServiceCollection` to quickly add Marten to any ASP&#46;NET Core or Worker Service application:
 
 <!-- snippet: sample_StartupConfigureServices -->
 <a id='snippet-sample_startupconfigureservices'></a>
@@ -19,6 +12,9 @@ builder.Services.AddMarten(options =>
     // Establish the connection string to your Marten database
     options.Connection(builder.Configuration.GetConnectionString("Marten")!);
 
+    // Specify that we want to use STJ as our serializer
+    options.UseSystemTextJsonForSerialization();
+
     // If we're running in development mode, let Marten just take care
     // of all necessary schema building and patching behind the scenes
     if (builder.Environment.IsDevelopment())
@@ -27,7 +23,7 @@ builder.Services.AddMarten(options =>
     }
 });
 ```
-<sup><a href='https://github.com/JasperFx/marten/blob/master/src/AspNetCoreWithMarten/Program.cs#L14-L29' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_startupconfigureservices' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/marten/blob/master/src/AspNetCoreWithMarten/Program.cs#L15-L33' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_startupconfigureservices' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 The `AddMarten()` method will add these service registrations to your application:
@@ -46,9 +42,10 @@ At runtime, when your application needs to resolve `IDocumentStore` for the firs
 
 1. Resolve a `StoreOptions` object from the initial `AddMarten()` configuration
 2. Apply all registered `IConfigureMarten` services to alter that `StoreOptions` object
-3. Reads the `IHostEnvironment` for the application if it exists to try to determine the main application assembly and paths for generated code output
-4. Attaches any `IInitialData` services that were registered in the IoC container to the `StoreOptions` object
-5. *Finally*, Marten builds a new `DocumentStore` object using the now configured `StoreOptions` object
+3. Apply all registered `IAsyncConfigureMarten` services to alter that `StoreOptions` object
+4. Reads the `IHostEnvironment` for the application if it exists to try to determine the main application assembly and paths for generated code output
+5. Attaches any `IInitialData` services that were registered in the IoC container to the `StoreOptions` object
+6. *Finally*, Marten builds a new `DocumentStore` object using the now configured `StoreOptions` object
 
 This model is comparable to the .Net `IOptions` model.
 
@@ -132,22 +129,54 @@ services.AddMarten()
     .UseLightweightSessions()
     .UseNpgsqlDataSource();
 ```
-<sup><a href='https://github.com/JasperFx/marten/blob/master/src/CoreTests/MartenServiceCollectionExtensionsTests.cs#L291-L299' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_using_usenpgsqldatasource' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/marten/blob/master/src/CoreTests/MartenServiceCollectionExtensionsTests.cs#L292-L300' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_using_usenpgsqldatasource' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 If you're on .NET 8 (and above), you can also use a dedicated [keyed registration](https://learn.microsoft.com/en-us/dotnet/core/whats-new/dotnet-8#keyed-di-services). This can be useful for scenarios where you need more than one data source registered:
 
-<!-- snippet: sample_using_UseNpgsqlDataSource -->
-<a id='snippet-sample_using_usenpgsqldatasource'></a>
+<!-- snippet: sample_using_UseNpgsqlDataSource_keyed -->
+<a id='snippet-sample_using_usenpgsqldatasource_keyed'></a>
 ```cs
-services.AddNpgsqlDataSource(ConnectionSource.ConnectionString);
+const string dataSourceKey = "marten_data_source";
+
+services.AddNpgsqlDataSource(ConnectionSource.ConnectionString, serviceKey: dataSourceKey);
 
 services.AddMarten()
     .UseLightweightSessions()
+    .UseNpgsqlDataSource(dataSourceKey);
+```
+<sup><a href='https://github.com/JasperFx/marten/blob/master/src/CoreTests/MartenServiceCollectionExtensionsTests.cs#L343-L353' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_using_usenpgsqldatasource_keyed' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+## Using a Multi-Host Data Source <Badge type="tip" text="7.11" />
+
+Marten includes support for `NpgsqlMultiHostDataSource`, allowing you to spread queries over your read replicas, potentially improving throughput in read-heavy applications. To get started, your connection string should specify your primary host along a list of replicas, per [Npgsql documentation](https://www.npgsql.org/doc/failover-and-load-balancing.html).
+
+Configuring `NpgsqlMultiHostDataSource` is very similar to a normal data source, simply swapping it for `AddMultiHostNpgsqlDataSource`. Marten will always use the primary node for queries with a `NpgsqlMultiHostDataSource` unless you explicitly opt to use the standby nodes. You can adjust what type of node Marten uses for querying via the `MultiHostSettings` store options:
+
+<!-- snippet: sample_using_UseNpgsqlDataSourceMultiHost -->
+<a id='snippet-sample_using_usenpgsqldatasourcemultihost'></a>
+```cs
+services.AddMultiHostNpgsqlDataSource(ConnectionSource.ConnectionString);
+
+services.AddMarten(x =>
+    {
+        // Will prefer standby nodes for querying.
+        x.Advanced.MultiHostSettings.ReadSessionPreference = TargetSessionAttributes.PreferStandby;
+    })
+    .UseLightweightSessions()
     .UseNpgsqlDataSource();
 ```
-<sup><a href='https://github.com/JasperFx/marten/blob/master/src/CoreTests/MartenServiceCollectionExtensionsTests.cs#L291-L299' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_using_usenpgsqldatasource' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/marten/blob/master/src/CoreTests/MartenServiceCollectionExtensionsTests.cs#L314-L326' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_using_usenpgsqldatasourcemultihost' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
+
+::: warning
+Marten will only use your read node preference with user queries (using IQuerySession) that are using a Marten-managed lifetime. 
+
+Internal queries, including the async daemon, will always use your primary node for reliability.
+
+Ensure your replication delay is acceptable as you risk returning outdated queries.
+:::
 
 ## Composite Configuration with ConfigureMarten()
 
@@ -215,7 +244,7 @@ public interface IConfigureMarten
     void Configure(IServiceProvider services, StoreOptions options);
 }
 ```
-<sup><a href='https://github.com/JasperFx/marten/blob/master/src/Marten/MartenServiceCollectionExtensions.cs#L816-L827' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_iconfiguremarten' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/marten/blob/master/src/Marten/MartenServiceCollectionExtensions.cs#L1028-L1039' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_iconfiguremarten' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 You could alternatively implement a custom `IConfigureMarten` (or `IConfigureMarten<T> where T : IDocumentStore` if you're [working with multiple databases](#working-with-multiple-marten-databases)) class like so:
@@ -258,7 +287,67 @@ public static IServiceCollection AddUserModule2(this IServiceCollection services
 <sup><a href='https://github.com/JasperFx/marten/blob/master/src/CoreTests/BootstrappingExamples.cs#L36-L53' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_addusermodule2' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
-## Using Lightweight Sessions
+### Using IoC Services for Configuring Marten <Badge type="tip" text="7.7" />
+
+There is also a newer mechanism called `IAsyncConfigureMarten` that was originally built to enable services
+like the [Feature Management library from Microsoft](https://learn.microsoft.com/en-us/azure/azure-app-configuration/use-feature-flags-dotnet-core) to
+be used to selectively configure Marten using potentially asynchronous methods and IoC resolved services. 
+
+That interface signature is:
+
+<!-- snippet: sample_IAsyncConfigureMarten -->
+<a id='snippet-sample_iasyncconfiguremarten'></a>
+```cs
+/// <summary>
+///     Mechanism to register additional Marten configuration that is applied after AddMarten()
+///     configuration, but before DocumentStore is initialized when you need to utilize some
+/// kind of asynchronous services like Microsoft's FeatureManagement feature to configure Marten
+/// </summary>
+public interface IAsyncConfigureMarten
+{
+    ValueTask Configure(StoreOptions options, CancellationToken cancellationToken);
+}
+```
+<sup><a href='https://github.com/JasperFx/marten/blob/master/src/Marten/MartenServiceCollectionExtensions.cs#L1041-L1053' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_iasyncconfiguremarten' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+As an example from the tests, here's a custom version that uses the Feature Management service:
+
+<!-- snippet: sample_FeatureManagementUsingExtension -->
+<a id='snippet-sample_featuremanagementusingextension'></a>
+```cs
+public class FeatureManagementUsingExtension: IAsyncConfigureMarten
+{
+    private readonly IFeatureManager _manager;
+
+    public FeatureManagementUsingExtension(IFeatureManager manager)
+    {
+        _manager = manager;
+    }
+
+    public async ValueTask Configure(StoreOptions options, CancellationToken cancellationToken)
+    {
+        if (await _manager.IsEnabledAsync("Module1"))
+        {
+            options.Events.MapEventType<Module1Event>("module1:event");
+        }
+    }
+}
+```
+<sup><a href='https://github.com/JasperFx/marten/blob/master/src/CoreTests/configuring_marten_with_async_extensions.cs#L77-L97' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_featuremanagementusingextension' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+And lastly, these extensions can be registered directly against `IServiceCollection` like so:
+
+<!-- snippet: sample_registering_async_config_marten -->
+<a id='snippet-sample_registering_async_config_marten'></a>
+```cs
+services.ConfigureMartenWithServices<FeatureManagementUsingExtension>();
+```
+<sup><a href='https://github.com/JasperFx/marten/blob/master/src/CoreTests/configuring_marten_with_async_extensions.cs#L34-L38' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_registering_async_config_marten' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+## Using Lightweight Sessions 
 
 ::: tip
 Most usages of Marten should default to the lightweight sessions for better performance

@@ -303,30 +303,30 @@ public class LicenseFeatureToggledEventGrouper: IAggregateGrouper<Guid>
 {
     public async Task Group(IQuerySession session, IEnumerable<IEvent> events, ITenantSliceGroup<Guid> grouping)
     {
-        var licenceFeatureTogglesEvents = events
+        var licenseFeatureTogglesEvents = events
             .OfType<IEvent<LicenseFeatureToggled>>()
             .ToList();
 
-        if (!licenceFeatureTogglesEvents.Any())
+        if (!licenseFeatureTogglesEvents.Any())
         {
             return;
         }
 
         // TODO -- let's build more samples first, but see if there's a useful
         // pattern for the next 3/4 operations later
-        var licenceIds = licenceFeatureTogglesEvents
+        var licenseIds = licenseFeatureTogglesEvents
             .Select(e => e.Data.LicenseId)
             .ToList();
 
         var result = await session.Query<UserFeatureToggles>()
-            .Where(x => licenceIds.Contains(x.LicenseId))
+            .Where(x => licenseIds.Contains(x.LicenseId))
             .Select(x => new {x.Id, x.LicenseId})
             .ToListAsync();
 
         var streamIds = (IDictionary<Guid, List<Guid>>)result.GroupBy(ks => ks.LicenseId, vs => vs.Id)
             .ToDictionary(ks => ks.Key, vs => vs.ToList());
 
-        grouping.AddEvents<LicenseFeatureToggled>(e => streamIds[e.LicenseId], licenceFeatureTogglesEvents);
+        grouping.AddEvents<LicenseFeatureToggled>(e => streamIds[e.LicenseId], licenseFeatureTogglesEvents);
     }
 }
 
@@ -418,6 +418,51 @@ public class UserGroupsAssignmentProjection: MultiStreamProjection<UserGroupsAss
 <sup><a href='https://github.com/JasperFx/marten/blob/master/src/EventSourcingTests/Projections/MultiStreamProjections/CustomGroupers/custom_slicer.cs#L16-L59' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_view-projection-custom-slicer' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
+## Rollup by Tenant Id <Badge type="tip" text="7.15.0" />
+
+::: info
+This feature was built specifically for a [JasperFx](https://jasperfx.net) client who indeed had this use case in their system
+:::
+
+Let's say that your are using conjoined tenancy within your event storage, but want to create some kind of summarized roll up
+document per tenant id in a projected document -- like maybe the number of open "accounts" or "issues" or "users."
+
+To do that, there's a recipe for the "event slicing" in multi-stream projections with Marten to just group by the event's
+tenant id and make that the identity of the projected document. That usage is shown below:
+
+<!-- snippet: sample_rollup_projection_by_tenant_id -->
+<a id='snippet-sample_rollup_projection_by_tenant_id'></a>
+```cs
+public class RollupProjection: MultiStreamProjection<Rollup, string>
+{
+    public RollupProjection()
+    {
+        // This opts into doing the event slicing by tenant id
+        RollUpByTenant();
+    }
+
+    public void Apply(Rollup state, AEvent e) => state.ACount++;
+    public void Apply(Rollup state, BEvent e) => state.BCount++;
+}
+
+public class Rollup
+{
+    [Identity]
+    public string TenantId { get; set; }
+    public int ACount { get; set; }
+    public int BCount { get; set; }
+}
+```
+<sup><a href='https://github.com/JasperFx/marten/blob/master/src/EventSourcingTests/Projections/MultiStreamProjections/rolling_up_by_tenant.cs#L55-L77' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_rollup_projection_by_tenant_id' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+Do note that you'll probably also need this flag in your configuration:
+
+```cs
+// opts is a StoreOptions object
+opts.Events.EnableGlobalProjectionsForConjoinedTenancy = true;
+```
+
 ## Event "Fan Out" Rules
 
 The `ViewProjection` also provides the ability to "fan out" child events from a parent event into the segment of events being used to
@@ -429,7 +474,7 @@ create an aggregated view. As an example, a `Travel` event we use in Marten test
 public IList<Movement> Movements { get; set; } = new List<Movement>();
 public List<Stop> Stops { get; set; } = new();
 ```
-<sup><a href='https://github.com/JasperFx/marten/blob/master/src/Marten.AsyncDaemon.Testing/TestingSupport/Travel.cs#L40-L45' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_travel_movements' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/marten/blob/master/src/DaemonTests/TestingSupport/Travel.cs#L40-L45' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_travel_movements' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 In a sample `ViewProjection`, we do a "fan out" of the `Travel.Movements` members into separate events being processed through the projection:
@@ -484,7 +529,7 @@ public class DayProjection: MultiStreamProjection<Day, int>
     public void Apply(Day day, Stop e) => day.Stops++;
 }
 ```
-<sup><a href='https://github.com/JasperFx/marten/blob/master/src/Marten.AsyncDaemon.Testing/ViewProjectionTests.cs#L131-L180' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_showing_fanout_rules' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/marten/blob/master/src/DaemonTests/ViewProjectionTests.cs#L132-L181' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_showing_fanout_rules' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 ## Using Custom Grouper with Fan Out Feature for Event Projections

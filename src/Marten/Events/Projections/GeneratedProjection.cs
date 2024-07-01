@@ -18,7 +18,7 @@ namespace Marten.Events.Projections;
 /// </summary>
 public abstract class GeneratedProjection: ProjectionBase, IProjectionSource, ICodeFile
 {
-    private bool _hasGenerated;
+    protected bool _hasGenerated;
 
     protected GeneratedProjection(string projectionName)
     {
@@ -37,17 +37,15 @@ public abstract class GeneratedProjection: ProjectionBase, IProjectionSource, IC
 
     void ICodeFile.AssembleTypes(GeneratedAssembly assembly)
     {
+        if (_hasGenerated)
+            return;
+
         lock (_assembleLocker)
         {
             if (_hasGenerated)
                 return;
-            lock (_assembleLocker)
-            {
-                if (_hasGenerated)
-                    return;
-                assembleTypes(assembly, StoreOptions);
-                _hasGenerated = true;
-            }
+            assembleTypes(assembly, StoreOptions);
+            _hasGenerated = true;
         }
     }
 
@@ -82,6 +80,12 @@ public abstract class GeneratedProjection: ProjectionBase, IProjectionSource, IC
         } };
     }
 
+    [Obsolete("Use AsyncOptions.TeardownDataOnRebuild instead")]
+    public override bool TeardownDataOnRebuild
+    {
+        get => Options.TeardownDataOnRebuild;
+        set => Options.TeardownDataOnRebuild = value;
+    }
 
     public AsyncOptions Options { get; } = new();
 

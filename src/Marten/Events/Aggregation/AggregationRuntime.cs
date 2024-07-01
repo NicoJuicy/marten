@@ -2,7 +2,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using JasperFx.Core.Reflection;
@@ -70,7 +69,9 @@ public abstract class AggregationRuntime<TDoc, TId>: IAggregationRuntime<TDoc, T
         var aggregate = slice.Aggregate;
         if (slice.Aggregate == null && lifecycle == ProjectionLifecycle.Inline)
         {
-            aggregate = await Storage.LoadAsync(slice.Id, session, cancellation).ConfigureAwait(false);
+            // It's actually important to go in through the front door and use the session so that
+            // the identity map can kick in here
+            aggregate = await session.LoadAsync<TDoc>(slice.Id, cancellation).ConfigureAwait(false);
         }
 
         // Does the aggregate already exist before the events are applied?
@@ -101,6 +102,8 @@ public abstract class AggregationRuntime<TDoc, TId>: IAggregationRuntime<TDoc, T
         {
             Storage.SetIdentity(aggregate, slice.Id);
             Versioning.TrySetVersion(aggregate, lastEvent);
+
+            Projection.ApplyMetadata(aggregate, lastEvent);
         }
 
         // Delete the aggregate *if* it existed prior to these events

@@ -5,8 +5,10 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Marten.Events;
+using Marten.Exceptions;
 using Marten.Services.Json.Transformations;
 using Marten.Storage;
+using Marten.Subscriptions;
 using static Marten.Events.EventMappingExtensions;
 
 namespace Marten.Events
@@ -41,6 +43,13 @@ namespace Marten.Events
         /// in testing
         /// </summary>
         TimeProvider TimeProvider { get; set; }
+
+        /// <summary>
+        /// Opt into having Marten create a unique index on Event.Id. The default is false. This may
+        /// be helpful if you need to create an external reference id to another system, or need to
+        /// load events by their Id
+        /// </summary>
+        public bool EnableUniqueIndexOnEventId { get; set; }
 
         /// <summary>
         ///     Register an event type with Marten. This isn't strictly necessary for normal usage,
@@ -85,6 +94,20 @@ namespace Marten.Events
         /// <param name="eventType">Event type name</param>
         /// <param name="eventTypeName">Event type name</param>
         void MapEventType(Type eventType, string eventTypeName);
+
+        /// <summary>
+        /// Add a new event subscription to this store
+        /// </summary>
+        /// <param name="subscription"></param>
+        void Subscribe(ISubscription subscription);
+
+        /// <summary>
+        /// Add a new event subscription to this store with the option to configure the filtering
+        /// and async daemon behavior
+        /// </summary>
+        /// <param name="subscription"></param>
+        /// <param name="configure"></param>
+        void Subscribe(ISubscription subscription, Action<ISubscriptionOptions>? configure = null);
 
         /// <summary>
         ///     <para>
@@ -556,4 +579,5 @@ public static class EventStoreOptionsExtensions
     {
         return options.Upcast(GetEventTypeNameWithSchemaVersion<TOldEvent>(schemaVersion), upcastAsync);
     }
+
 }

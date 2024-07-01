@@ -1,7 +1,9 @@
 #nullable enable
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using JasperFx.CodeGeneration;
+using JasperFx.Core.Reflection;
 
 namespace Marten.Schema.Identity;
 
@@ -13,6 +15,7 @@ public interface IIdGeneration
     /// <summary>
     ///     What types are supported by this strategy? Example: string, or int/long, or Guid
     /// </summary>
+    [Obsolete("Will be removed in Marten 8.0")]
     IEnumerable<Type> KeyTypes { get; }
 
     /// <summary>

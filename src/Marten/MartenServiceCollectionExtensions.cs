@@ -5,6 +5,8 @@ using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
 using JasperFx.CodeGeneration;
 using JasperFx.Core;
 using JasperFx.Core.Reflection;
@@ -15,6 +17,7 @@ using Marten.Internal;
 using Marten.Schema;
 using Marten.Services;
 using Marten.Sessions;
+using Marten.Subscriptions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -27,6 +30,20 @@ namespace Marten;
 
 public static class MartenServiceCollectionExtensions
 {
+    /// <summary>
+    ///     Apply additional configuration to a Marten DocumentStore. This is applied *after*
+    ///     AddMarten(), but before the DocumentStore is initialized
+    /// </summary>
+    /// <param name="services"></param>
+    /// <param name="configure"></param>
+    /// <returns></returns>
+    public static IServiceCollection ConfigureMartenWithServices<T>(this IServiceCollection services) where T : class, IAsyncConfigureMarten
+    {
+        services.EnsureAsyncConfigureMartenApplicationIsRegistered();
+        services.AddSingleton<IAsyncConfigureMarten, T>();
+        return services;
+    }
+
     /// <summary>
     ///     Apply additional configuration to a Marten DocumentStore. This is applied *after*
     ///     AddMarten(), but before the DocumentStore is initialized
@@ -300,13 +317,36 @@ public static class MartenServiceCollectionExtensions
         return list;
     }
 
+    internal static void EnsureAsyncConfigureMartenApplicationIsRegistered(this IServiceCollection services)
+    {
+        if (!services.Any(
+                x => x.ServiceType == typeof(IHostedService) && x.ImplementationType == typeof(AsyncConfigureMartenApplication)))
+        {
+            services.Insert(0,
+                new ServiceDescriptor(typeof(IHostedService), typeof(AsyncConfigureMartenApplication), ServiceLifetime.Singleton));
+        }
+    }
+
     internal static void EnsureMartenActivatorIsRegistered(this IServiceCollection services)
     {
         if (!services.Any(
                 x => x.ServiceType == typeof(IHostedService) && x.ImplementationType == typeof(MartenActivator)))
         {
-            services.Insert(0,
-                new ServiceDescriptor(typeof(IHostedService), typeof(MartenActivator), ServiceLifetime.Singleton));
+            var descriptor = services.FirstOrDefault(x =>
+                x.ServiceType == typeof(IHostedService) &&
+                x.ImplementationType == typeof(AsyncConfigureMartenApplication));
+
+            if (descriptor != null)
+            {
+                var index = services.IndexOf(descriptor);
+                services.Insert(index + 1,
+                    new ServiceDescriptor(typeof(IHostedService), typeof(MartenActivator), ServiceLifetime.Singleton));
+            }
+            else
+            {
+                services.Insert(0,
+                    new ServiceDescriptor(typeof(IHostedService), typeof(MartenActivator), ServiceLifetime.Singleton));
+            }
         }
     }
 
@@ -490,6 +530,132 @@ public static class MartenServiceCollectionExtensions
             Services.EnsureMartenActivatorIsRegistered<T>();
             Services.AddSingleton<TData>();
             Services.AddSingleton<IConfigureMarten<T>, AddInitialData<T, TData>>();
+            return this;
+        }
+
+        /// <summary>
+        /// Add a projection to this application that requires IoC services. The projection itself will
+        /// be created with the application's IoC container
+        /// </summary>
+        /// <param name="lifecycle">The projection lifecycle for Marten</param>
+        /// <param name="lifetime">The IoC lifecycle for the projection instance. Note that the Transient lifetime will still be treated as Scoped</param>
+        /// /// <typeparam name="TProjection">The type of projection to add</typeparam>
+        /// <returns></returns>
+        public MartenStoreExpression<T> AddProjectionWithServices<TProjection>(ProjectionLifecycle lifecycle, ServiceLifetime lifetime) where TProjection : class, IProjection
+        {
+            switch (lifetime)
+            {
+                case ServiceLifetime.Singleton:
+                    Services.AddSingleton<TProjection>();
+                    Services.ConfigureMarten<T>((s, opts) =>
+                    {
+                        var projection = s.GetRequiredService<TProjection>();
+                        opts.Projections.Add(projection, lifecycle);
+                    });
+                    break;
+
+                case ServiceLifetime.Transient:
+                case ServiceLifetime.Scoped:
+                    Services.AddScoped<TProjection>();
+                    Services.ConfigureMarten<T>((s, opts) =>
+                    {
+                        var projection = new ScopedProjectionWrapper<TProjection>(s)
+                        {
+                            Lifecycle = lifecycle,
+                            ProjectionType = typeof(TProjection)
+                        };
+
+                        opts.Projections.Add(projection, lifecycle);
+                    });
+                    break;
+            }
+
+            return this;
+        }
+
+        /// <summary>
+        /// Add a projection to this application that requires IoC services. The projection itself will
+        /// be created with the application's IoC container
+        /// </summary>
+        /// <param name="lifecycle">The projection lifecycle for Marten</param>
+        /// <param name="lifetime">The IoC lifecycle for the projection instance. Note that the Transient lifetime will still be treated as Scoped</param>
+        /// <typeparam name="TProjection">The type of projection to add</typeparam>
+        /// <returns></returns>
+        public MartenStoreExpression<T> AddProjectionWithServices<TProjection>(ProjectionLifecycle lifecycle, ServiceLifetime lifetime, string projectionName) where TProjection : class, IProjection
+        {
+            switch (lifetime)
+            {
+                case ServiceLifetime.Singleton:
+                    Services.AddSingleton<TProjection>();
+                    Services.ConfigureMarten<T>((s, opts) =>
+                    {
+                        var projection = s.GetRequiredService<TProjection>();
+                        opts.Projections.Add(projection, lifecycle, projectionName);
+                    });
+                    break;
+
+                case ServiceLifetime.Transient:
+                case ServiceLifetime.Scoped:
+                    Services.AddScoped<TProjection>();
+                    Services.ConfigureMarten<T>((s, opts) =>
+                    {
+                        var projection = new ScopedProjectionWrapper<TProjection>(s)
+                        {
+                            Lifecycle = lifecycle,
+                            ProjectionType = typeof(TProjection),
+                            ProjectionName = projectionName
+                        };
+
+                        opts.Projections.Add(projection, lifecycle, projectionName);
+                    });
+                    break;
+            }
+
+
+            return this;
+        }
+
+
+        /// <summary>
+        /// Add a subscription to this Marten store that will require resolution
+        /// from the application's IoC container in order to function correctly
+        /// </summary>
+        /// <param name="lifetime">IoC service lifetime</param>
+        /// <param name="configure">Optional configuration of the subscription within Marten</param>
+        /// <typeparam name="T">The type of projection to add</typeparam>
+        /// <returns></returns>
+        public MartenStoreExpression<T> AddSubscriptionWithServices<TSubscription>(ServiceLifetime lifetime, Action<ISubscriptionOptions>? configure = null) where TSubscription : class, ISubscription
+        {
+            switch (lifetime)
+            {
+                case ServiceLifetime.Singleton:
+                    Services.AddSingleton<TSubscription>();
+                    Services.ConfigureMarten<T>((s, opts) =>
+                    {
+                        var subscription = s.GetRequiredService<TSubscription>();
+                        if (subscription is SubscriptionBase subscriptionBase)
+                        {
+                            configure?.Invoke(subscriptionBase);
+                            opts.Projections.Subscribe(subscriptionBase);
+                        }
+                        else
+                        {
+                            opts.Projections.Subscribe(subscription, configure);
+                        }
+                    });
+                    break;
+
+                case ServiceLifetime.Transient:
+                case ServiceLifetime.Scoped:
+                    Services.AddScoped<TSubscription>();
+                    Services.ConfigureMarten<T>((s, opts) =>
+                    {
+                        var subscription = new ScopedSubscriptionServiceWrapper<TSubscription>(s);
+                        opts.Projections.Subscribe(subscription, configure);
+                    });
+                    break;
+            }
+
             return this;
         }
     }
@@ -744,7 +910,7 @@ public static class MartenServiceCollectionExtensions
                             ProjectionType = typeof(T)
                         };
 
-                        opts.Projections.Add(projection, lifecycle);
+                        opts.Projections.Register(projection, lifecycle);
                     });
                     break;
             }
@@ -787,7 +953,7 @@ public static class MartenServiceCollectionExtensions
                             ProjectionName = projectionName
                         };
 
-                        opts.Projections.Add(projection, lifecycle, projectionName);
+                        opts.Projections.Register(projection, lifecycle);
                     });
                     break;
             }
@@ -795,6 +961,52 @@ public static class MartenServiceCollectionExtensions
 
             return this;
         }
+
+
+        /// <summary>
+        /// Add a subscription to this Marten store that will require resolution
+        /// from the application's IoC container in order to function correctly
+        /// </summary>
+        /// <param name="lifetime">IoC service lifetime</param>
+        /// <param name="configure">Optional configuration of the subscription within Marten</param>
+        /// <typeparam name="T"></typeparam>
+        /// <returns></returns>
+        public MartenConfigurationExpression AddSubscriptionWithServices<T>(
+            ServiceLifetime lifetime, Action<ISubscriptionOptions>? configure = null) where T : class, ISubscription
+        {
+            switch (lifetime)
+            {
+                case ServiceLifetime.Singleton:
+                    Services.AddSingleton<T>();
+                    Services.ConfigureMarten((s, opts) =>
+                    {
+                        var subscription = s.GetRequiredService<T>();
+                        if (subscription is SubscriptionBase subscriptionBase)
+                        {
+                            configure?.Invoke(subscriptionBase);
+                            opts.Projections.Subscribe(subscriptionBase);
+                        }
+                        else
+                        {
+                            opts.Projections.Subscribe(subscription, configure);
+                        }
+                    });
+                    break;
+
+                case ServiceLifetime.Transient:
+                case ServiceLifetime.Scoped:
+                    Services.AddScoped<T>();
+                    Services.ConfigureMarten((s, opts) =>
+                    {
+                        var subscription = new ScopedSubscriptionServiceWrapper<T>(s);
+                        opts.Projections.Subscribe(subscription, configure);
+                    });
+                    break;
+            }
+
+            return this;
+        }
+
     }
 
     internal class AddInitialData<T, TData>: IConfigureMarten<T> where T : IDocumentStore where TData : IInitialData
@@ -825,6 +1037,45 @@ public interface IConfigureMarten
 }
 
 #endregion
+
+#region sample_IAsyncConfigureMarten
+
+/// <summary>
+///     Mechanism to register additional Marten configuration that is applied after AddMarten()
+///     configuration, but before DocumentStore is initialized when you need to utilize some
+/// kind of asynchronous services like Microsoft's FeatureManagement feature to configure Marten
+/// </summary>
+public interface IAsyncConfigureMarten
+{
+    ValueTask Configure(StoreOptions options, CancellationToken cancellationToken);
+}
+
+#endregion
+
+internal class AsyncConfigureMartenApplication: IHostedService
+{
+    private readonly IList<IAsyncConfigureMarten> _configures;
+    private readonly StoreOptions _options;
+
+    public AsyncConfigureMartenApplication(IEnumerable<IAsyncConfigureMarten> configures, StoreOptions options)
+    {
+        _configures = configures.ToList();
+        _options = options;
+    }
+
+    public async Task StartAsync(CancellationToken cancellationToken)
+    {
+        foreach (var configure in _configures)
+        {
+            await configure.Configure(_options, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        return Task.CompletedTask;
+    }
+}
 
 internal class LambdaConfigureMarten: IConfigureMarten
 {

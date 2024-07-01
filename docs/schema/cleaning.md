@@ -11,29 +11,60 @@ This service is exposed as the `IDocumentStore.Advanced.Clean` property. You can
 <!-- snippet: sample_clean_out_documents -->
 <a id='snippet-sample_clean_out_documents'></a>
 ```cs
-public void clean_out_documents(IDocumentStore store)
+public async Task clean_out_documents(IDocumentStore store)
 {
     // Completely remove all the database schema objects related
     // to the User document type
-    store.Advanced.Clean.CompletelyRemove(typeof(User));
+    await store.Advanced.Clean.CompletelyRemoveAsync(typeof(User));
 
     // Tear down and remove all Marten related database schema objects
-    store.Advanced.Clean.CompletelyRemoveAll();
+    await store.Advanced.Clean.CompletelyRemoveAllAsync();
 
     // Deletes all the documents stored in a Marten database
-    store.Advanced.Clean.DeleteAllDocuments();
+    await store.Advanced.Clean.DeleteAllDocumentsAsync();
+
+    // Deletes all the event data stored in a Marten database
+    await store.Advanced.Clean.DeleteAllEventDataAsync();
 
     // Deletes all of the persisted User documents
-    store.Advanced.Clean.DeleteDocumentsByType(typeof(User));
+    await store.Advanced.Clean.DeleteDocumentsByTypeAsync(typeof(User));
 
     // For cases where you may want to keep some document types,
     // but eliminate everything else. This is here specifically to support
     // automated testing scenarios where you have some static data that can
     // be safely reused across tests
-    store.Advanced.Clean.DeleteDocumentsExcept(typeof(Company), typeof(User));
+    await store.Advanced.Clean.DeleteDocumentsExceptAsync(typeof(Company), typeof(User));
 }
 ```
-<sup><a href='https://github.com/JasperFx/marten/blob/master/src/Marten.Testing/Examples/DocumentCleanerExamples.cs#L7-L30' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_clean_out_documents' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/marten/blob/master/src/Marten.Testing/Examples/DocumentCleanerExamples.cs#L13-L39' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_clean_out_documents' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+You can also tear down all Data from the `IHost` instance using the `IHost.CleanAllMartenDataAsync()` method.
+
+<!-- snippet: sample_clean_out_documents_ihost -->
+<a id='snippet-sample_clean_out_documents_ihost'></a>
+```cs
+public async Task clean_out_documents(IHost host)
+{
+    // Clean off all Marten data in the default DocumentStore for this host
+    await host.CleanAllMartenDataAsync();
+}
+```
+<sup><a href='https://github.com/JasperFx/marten/blob/master/src/Marten.Testing/Examples/DocumentCleanerExamples.cs#L42-L48' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_clean_out_documents_ihost' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+If you're working with [multiple Marten databases](/configuration/hostbuilder#working-with-multiple-marten-databases), you can use `IHost.CleanAllMartenDataAsync<TStore>()` to clean out all data in a specific database:
+
+<!-- snippet: sample_clean_out_documents_ihost_specific_database -->
+<a id='snippet-sample_clean_out_documents_ihost_specific_database'></a>
+```cs
+public async Task clean_out_database_documents(IHost host)
+{
+    // Clean off all Marten data in the IInvoicing DocumentStore for this host
+    await host.CleanAllMartenDataAsync<IInvoicingStore>();
+}
+```
+<sup><a href='https://github.com/JasperFx/marten/blob/master/src/Marten.Testing/Examples/DocumentCleanerExamples.cs#L50-L56' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_clean_out_documents_ihost_specific_database' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 ## Reset all data
@@ -48,4 +79,56 @@ theStore.Advanced.InitialDataCollection.Add(new Users());
 await theStore.Advanced.ResetAllData();
 ```
 <sup><a href='https://github.com/JasperFx/marten/blob/master/src/DocumentDbTests/SessionMechanics/reset_all_data_usage.cs#L45-L49' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_reset_all_data' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+Use `IHost.ResetAllMartenDataAsync()` to delete all current document, event data and then (re)applies the configured initial data from the `IHost` instance.
+
+<!-- snippet: sample_reset_all_data_ihost -->
+<a id='snippet-sample_reset_all_data_ihost'></a>
+```cs
+using var host = await Host.CreateDefaultBuilder()
+    .ConfigureServices(
+        services =>
+        {
+            services.AddMarten(
+                    opts =>
+                    {
+                        opts.Connection(ConnectionSource.ConnectionString);
+                        opts.Logger(new TestOutputMartenLogger(_output));
+                    }
+                )
+                .InitializeWith(new reset_all_data_usage.Users());
+        }
+    )
+    .StartAsync();
+
+await host.ResetAllMartenDataAsync();
+```
+<sup><a href='https://github.com/JasperFx/marten/blob/master/src/DocumentDbTests/SessionMechanics/reset_all_data_usage_ihost.cs#L25-L45' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_reset_all_data_ihost' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+If you're working with [multiple Marten databases](/configuration/hostbuilder#working-with-multiple-marten-databases), you can use `IHost.ResetAllMartenDataAsync<TStore>()` to reset all data in a specific database:
+
+<!-- snippet: sample_reset_all_data_ihost_specific_database -->
+<a id='snippet-sample_reset_all_data_ihost_specific_database'></a>
+```cs
+using var host = await Host.CreateDefaultBuilder()
+    .ConfigureServices(
+        services =>
+        {
+            services.AddMartenStore<IInvoicingStore>(
+                    opts =>
+                    {
+                        opts.Connection(ConnectionSource.ConnectionString);
+                        opts.Logger(new TestOutputMartenLogger(_output));
+                    }
+                )
+                .InitializeWith(new reset_all_data_usage.Users());
+        }
+    )
+    .StartAsync();
+
+await host.ResetAllMartenDataAsync<IInvoicingStore>();
+```
+<sup><a href='https://github.com/JasperFx/marten/blob/master/src/DocumentDbTests/SessionMechanics/reset_all_data_usage_ihost.cs#L51-L71' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_reset_all_data_ihost_specific_database' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->

@@ -1,3 +1,4 @@
+#nullable enable
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
@@ -24,11 +25,15 @@ internal class IsOneOf: IMethodCallParser
     {
         var queryableMember = memberCollection.MemberFor(expression.Arguments[0]);
         var locator = queryableMember.TypedLocator;
-        var values = expression.Arguments[1].ReduceToConstant().Value;
+        var values = expression.Arguments[1].ReduceToConstant().Value!;
 
         if (queryableMember.MemberType.IsEnum)
         {
             return new EnumIsOneOfWhereFragment(values, options.Serializer().EnumStorage, locator);
+        }
+        else if (queryableMember is IValueTypeMember valueTypeMember)
+        {
+            return new IsOneOfFilter(queryableMember, new CommandParameter(valueTypeMember.ConvertFromWrapperArray(values)));
         }
 
         return new IsOneOfFilter(queryableMember, new CommandParameter(values));

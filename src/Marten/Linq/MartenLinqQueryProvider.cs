@@ -1,3 +1,4 @@
+#nullable enable
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -8,7 +9,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Marten.Exceptions;
 using Marten.Internal.Sessions;
-using Marten.Linq.Includes;
 using Marten.Linq.Parsing;
 using Marten.Linq.QueryHandlers;
 using Marten.Linq.Selectors;
@@ -28,7 +28,7 @@ internal class MartenLinqQueryProvider: IQueryProvider
 
     public Type SourceType { get; }
 
-    internal QueryStatistics Statistics { get; set; }
+    internal QueryStatistics Statistics { get; set; } = null!;
 
     public IQueryable CreateQuery(Expression expression)
     {
@@ -52,7 +52,7 @@ internal class MartenLinqQueryProvider: IQueryProvider
 
         ensureStorageExists(parser);
 
-        return ExecuteHandler(handler);
+        return ExecuteHandler(handler)!;
     }
 
     private void ensureStorageExists(LinqQueryParser parser)
@@ -73,7 +73,7 @@ internal class MartenLinqQueryProvider: IQueryProvider
     }
 
 
-    public async Task<TResult> ExecuteAsync<TResult>(Expression expression, CancellationToken token,
+    public async Task<TResult?> ExecuteAsync<TResult>(Expression expression, CancellationToken token,
         SingleValueMode valueMode)
     {
         try
@@ -94,7 +94,7 @@ internal class MartenLinqQueryProvider: IQueryProvider
     }
 
     public async Task<int> StreamJson<TResult>(Stream stream, Expression expression, CancellationToken token,
-        SingleValueMode mode)
+        SingleValueMode mode) where TResult: notnull
     {
         try
         {
@@ -117,7 +117,7 @@ internal class MartenLinqQueryProvider: IQueryProvider
         return default;
     }
 
-    public async Task<T> ExecuteHandlerAsync<T>(IQueryHandler<T> handler, CancellationToken token)
+    public async Task<T?> ExecuteHandlerAsync<T>(IQueryHandler<T> handler, CancellationToken token)
     {
         try
         {
@@ -134,7 +134,7 @@ internal class MartenLinqQueryProvider: IQueryProvider
         return default;
     }
 
-    public T ExecuteHandler<T>(IQueryHandler<T> handler)
+    public T? ExecuteHandler<T>(IQueryHandler<T> handler)
     {
         try
         {
@@ -153,7 +153,7 @@ internal class MartenLinqQueryProvider: IQueryProvider
 
 
     public async IAsyncEnumerable<T> ExecuteAsyncEnumerable<T>(Expression expression,
-        [EnumeratorCancellation] CancellationToken token)
+        MartenLinqQueryProvider martenProvider, [EnumeratorCancellation] CancellationToken token)
     {
         var parser = new LinqQueryParser(this, _session, expression);
         var statements = parser.BuildStatements();
@@ -166,8 +166,13 @@ internal class MartenLinqQueryProvider: IQueryProvider
         var cmd = _session.BuildCommand(statement);
 
         await using var reader = await _session.ExecuteReaderAsync(cmd, token).ConfigureAwait(false);
+        var totalRowsColumnIndex = martenProvider.Statistics != null ? reader.GetOrdinal("total_rows") : -1;
         while (await reader.ReadAsync(token).ConfigureAwait(false))
         {
+            if (martenProvider.Statistics != null)
+            {
+                martenProvider.Statistics.TotalResults = await reader.GetFieldValueAsync<int>(totalRowsColumnIndex, token).ConfigureAwait(false);
+            }
             yield return await selector.ResolveAsync(reader, token).ConfigureAwait(false);
         }
     }

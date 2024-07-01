@@ -46,6 +46,7 @@ public abstract class DocumentStorage<T, TId>: IDocumentStorage<T, TId>, IHaveMe
     private readonly string[] _selectFields;
     private ISqlFragment? _defaultWhere;
     protected Action<T, TId> _setter;
+    private readonly DocumentMapping _document;
 
     public DocumentStorage(StorageStyle storageStyle, DocumentMapping document)
     {
@@ -65,20 +66,7 @@ public abstract class DocumentStorage<T, TId>: IDocumentStorage<T, TId>, IHaveMe
         var fieldSelector = _selectFields.Join(", ");
         _selectClause = $"select {fieldSelector} from {document.TableName.QualifiedName} as d";
 
-
-        if (DuplicatedFields.Any())
-        {
-            var duplicatedFields = DuplicatedFields.Select(x => "d." + x.ColumnName).Where(x => !_selectFields.Contains(x));
-            var allFields = _selectFields.Concat(duplicatedFields).ToArray();
-            SelectClauseWithDuplicatedFields = new DuplicatedFieldSelectClause(TableName.QualifiedName, $"select {allFields.Join(", ")} from {document.TableName.QualifiedName} as d",
-                allFields, typeof(T), this);
-        }
-        else
-        {
-            SelectClauseWithDuplicatedFields = this;
-        }
-
-
+        _document = document;
 
         _loaderSql =
             $"select {fieldSelector} from {document.TableName.QualifiedName} as d where id = $1";
@@ -95,7 +83,6 @@ public abstract class DocumentStorage<T, TId>: IDocumentStorage<T, TId>, IHaveMe
         UseOptimisticConcurrency = document.UseOptimisticConcurrency;
         UseNumericRevisions = document.UseNumericRevisions;
 
-
         _setter = LambdaBuilder.Setter<T, TId>(document.IdMember)!;
 
         DeleteFragment = _mapping.DeleteStyle == DeleteStyle.Remove
@@ -105,9 +92,33 @@ public abstract class DocumentStorage<T, TId>: IDocumentStorage<T, TId>, IHaveMe
         HardDeleteFragment = new HardDelete(this);
     }
 
+    object IDocumentStorage.RawIdentityValue(object id)
+    {
+        return RawIdentityValue((TId)id);
+    }
+
     public bool UseNumericRevisions { get;  }
 
-    public ISelectClause SelectClauseWithDuplicatedFields { get; }
+    // TODO -- convert to a method in V8
+    // this has to be a new instance every time because of how it gets the FromObject
+    // renamed in Include() batches
+    public ISelectClause SelectClauseWithDuplicatedFields
+    {
+        get
+        {
+            if (DuplicatedFields.Any())
+            {
+                var duplicatedFields = DuplicatedFields.Select(x => "d." + x.ColumnName).Where(x => !_selectFields.Contains(x));
+                var allFields = _selectFields.Concat(duplicatedFields).ToArray();
+                return new DuplicatedFieldSelectClause(TableName.QualifiedName, $"select {allFields.Join(", ")} from {_document.TableName.QualifiedName} as d",
+                    allFields, typeof(T), this);
+            }
+            else
+            {
+                return this;
+            }
+        }
+    }
 
     MetadataColumn[] IHaveMetadataColumns.MetadataColumns()
     {
@@ -162,7 +173,7 @@ public abstract class DocumentStorage<T, TId>: IDocumentStorage<T, TId>, IHaveMe
 
     public ISqlFragment ByIdFilter(TId id)
     {
-        return new ByIdFilter<TId>(id, _idType);
+        return new ByIdFilter(RawIdentityValue(id), _idType);
     }
 
     public IDeletion HardDeleteForId(TId id, string tenant)
@@ -337,13 +348,18 @@ public abstract class DocumentStorage<T, TId>: IDocumentStorage<T, TId>, IHaveMe
         return new StatsSelectClause<T>(this, statistics);
     }
 
+    public virtual object RawIdentityValue(TId id) => id;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public NpgsqlParameter ParameterForId(TId id) => new() {Value = RawIdentityValue(id)};
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public NpgsqlCommand BuildLoadCommand(TId id, string tenant)
     {
         return _mapping.TenancyStyle == TenancyStyle.Conjoined
             ? new NpgsqlCommand(_loaderSql) {
                 Parameters = {
-                    new() { Value = id },
+                    ParameterForId(id),
                 new() { Value = tenant }
                 }
             }
@@ -351,7 +367,7 @@ public abstract class DocumentStorage<T, TId>: IDocumentStorage<T, TId>, IHaveMe
             {
                 Parameters =
                 {
-                    new() { Value = id }
+                    ParameterForId(id)
                 }
             };
     }
@@ -480,6 +496,6 @@ internal class DuplicatedFieldSelectClause: ISelectClause, IModifyableFromObject
 
     public ISelectClause UseStatistics(QueryStatistics statistics)
     {
-        throw new NotSupportedException();
+        return typeof(StatsSelectClause<>).CloseAndBuildAs<ISelectClause>(this, statistics, SelectedType);
     }
 }
