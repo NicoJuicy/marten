@@ -20,6 +20,7 @@ using Weasel.Core;
 using Weasel.Postgresql;
 using Weasel.Postgresql.Tables;
 using Weasel.Postgresql.Tables.Indexes;
+using Weasel.Postgresql.Tables.Partitioning;
 
 namespace Marten.Schema;
 
@@ -110,8 +111,12 @@ public class DocumentMapping: IDocumentMapping, IDocumentType
 
         applyAnyMartenAttributes(documentType);
 
+        StoreOptions.applyPostPolicies(this);
+
         _schema = new Lazy<DocumentSchema>(() => new DocumentSchema(this));
     }
+
+    public IPartitionStrategy? Partitioning { get; set; }
 
     public DocumentCodeGen? CodeGen { get; private set; }
 
@@ -246,6 +251,12 @@ public class DocumentMapping: IDocumentMapping, IDocumentType
     IDocumentType IDocumentType.Root => this;
 
     public IReadOnlyList<DuplicatedField> DuplicatedFields => _duplicates;
+
+    /// <summary>
+    /// Setting this to true just means that Weasel should assume that *something* else is
+    /// managing the partitions and that Weasel should not try to manage them at all
+    /// </summary>
+    public bool IgnorePartitions { get; set; }
 
     public bool IsHierarchy()
     {
@@ -603,7 +614,10 @@ public class DocumentMapping: IDocumentMapping, IDocumentType
 
     public DuplicatedField DuplicateField(string memberName, string pgType = null, bool notNull = false)
     {
-        var member = (QueryableMember)QueryMembers.MemberFor(memberName);
+        var existing = QueryMembers.MemberFor(memberName);
+        if (existing is DuplicatedField f) return f;
+
+        var member = (QueryableMember)existing;
 
         var enumStorage = StoreOptions.Advanced.DuplicatedFieldEnumStorage;
         var dateTimeStorage = StoreOptions.Advanced.DuplicatedFieldUseTimestampWithoutTimeZoneForDateTime;
@@ -733,6 +747,12 @@ public class DocumentMapping: IDocumentMapping, IDocumentType
 
         var memberType = _idMember.GetMemberType();
         return memberType.IsNullable() ? memberType.GetGenericArguments()[0] : memberType;
+    }
+
+    internal void PartitionByDeleted()
+    {
+        Partitioning = new ListPartitioning { Columns = [SchemaConstants.DeletedColumn] }
+            .AddPartition("deleted", true);
     }
 }
 

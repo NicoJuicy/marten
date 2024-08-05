@@ -65,6 +65,7 @@ internal class DocumentTable: Table
         if (mapping.DeleteStyle == DeleteStyle.SoftDelete)
         {
             AddColumn(_mapping.Metadata.IsSoftDeleted);
+
             Indexes.Add(new DocumentIndex(mapping, SchemaConstants.DeletedColumn));
 
             AddColumn(_mapping.Metadata.SoftDeletedAt);
@@ -72,6 +73,20 @@ internal class DocumentTable: Table
 
         Indexes.AddRange(mapping.Indexes);
         ForeignKeys.AddRange(mapping.ForeignKeys);
+
+        Partitioning = mapping.Partitioning;
+
+        // Any column referred to in the partitioning has to be
+        // part of the primary key
+        if (Partitioning != null)
+        {
+            IgnorePartitionsInMigration = mapping.IgnorePartitions;
+            foreach (var columnName in Partitioning.Columns)
+            {
+                var column = this.ModifyColumn(columnName);
+                column.AsPrimaryKey();
+            }
+        }
     }
 
     public Type DocumentType => _mapping.DocumentType;
